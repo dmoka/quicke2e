@@ -20,7 +20,7 @@ export default [{
 ```
 
 ```
-$ jevtester run jevtester.spec.mjs --base http://localhost:3200
+$ npx jevtester run jevtester.spec.mjs --base http://localhost:3200
 PASS  book-with-code                8 steps    4.3s  $0.00032  DONE_VERIFIED
 ```
 
@@ -33,23 +33,26 @@ Playwright MCP (Sonnet 5), and 8.30× faster and 675× cheaper than it on Opus 5
 ## Quick start
 
 ```bash
-git clone https://github.com/dmoka/jevtester && cd jevtester
-npm ci && npx playwright install chromium
+npm install -D jevtester && npx playwright install chromium
 export OPENROUTER_API_KEY=...                    # the Jev engine, via OpenRouter
-alias jevtester="node $PWD/bin/jevtester.mjs"   # until the npm release; then: npx jevtester
+npx jevtester run jevtester.spec.mjs --base http://localhost:3000
+```
 
-# no app handy? run the examples against the bundled fixture pages
+No app handy? Clone the repo and run the examples against the bundled fixture pages:
+
+```bash
+git clone https://github.com/dmoka/jevtester && cd jevtester && npm ci && npx playwright install chromium
 node fixtures/serve.mjs 8899 &
-jevtester run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
+npx jevtester run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
 ```
 
 On your own app:
 
 ```bash
-jevtester discover http://localhost:3000 -o jevtester.map.json      # map the app (once)
-jevtester check jevtester.spec.mjs --base http://localhost:3000    # reject weak assertions
-jevtester run   jevtester.spec.mjs --base http://localhost:3000 --map jevtester.map.json
-jevtester run   jevtester.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
+npx jevtester discover http://localhost:3000 -o jevtester.map.json      # map the app (once)
+npx jevtester check jevtester.spec.mjs --base http://localhost:3000    # reject weak assertions
+npx jevtester run   jevtester.spec.mjs --base http://localhost:3000 --map jevtester.map.json
+npx jevtester run   jevtester.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
 ```
 
 The browser is visible when you run a command yourself in a terminal, so you can watch what the model
