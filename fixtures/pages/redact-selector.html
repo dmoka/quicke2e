@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Codes</title>
+<!-- AUDIT r8: spec declares redact: [".backup-code"]. CSS redaction renames only candidates INSIDE a
+     matched element. Each code below reaches a candidate another way: the sensitive span is inside
+     the button; a button named by aria-labelledby; document.title; an open shadow root. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>Backup codes</h1>
+<p><button type="button">Copy code <span class="backup-code">AAAA-4821-9930</span></button></p>
+<p><span id="k1" class="backup-code">BBBB-7777-1111</span> <button type="button" aria-labelledby="k1">x</button></p>
+<p><code-box></code-box></p>
+<form method="get" action="/done.html"><label for="f-n">Nickname</label><input id="f-n" name="Nick" data-truth="nick">
+<button type="submit" data-truth="save">Save settings</button></form>
+<script>document.title="Codes DDDD-2222-3333";
+customElements.define("code-box",class extends HTMLElement{connectedCallback(){this.attachShadow({mode:"open"}).innerHTML='<span class="backup-code"><button type="button">Reveal CCCC-5678-9012</button></span>';}});</script>
+</body></html>

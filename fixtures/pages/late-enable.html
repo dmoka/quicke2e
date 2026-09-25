@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Workspace</title>
+<!-- AUDIT 2026-09-24: the submit button is DISABLED until an async availability check finishes
+     1,800 ms after the last keystroke (debounced). snapshot.js:126 skips disabled elements, and
+     settle() caps at 1,200 ms (loop.mjs:178), so the first snapshot after typing offers no submit.
+     The loop must choose WAIT, not DONE/BLOCKED, and must not re-type. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>New workspace</h1>
+<form method="get" action="/done.html">
+  <label for="f-slug">Workspace URL</label>
+  <input id="f-slug" name="Slug" data-truth="slug">
+  <p id="status">Enter a workspace URL.</p>
+  <button type="submit" id="go" data-truth="save" disabled>Create workspace</button>
+</form>
+<script>
+var t, s = document.getElementById("f-slug"), go = document.getElementById("go"), st = document.getElementById("status");
+s.addEventListener("input", function () {
+  go.disabled = true; clearTimeout(t);
+  st.textContent = "Checking availability…";
+  t = setTimeout(function () { go.disabled = !s.value; st.textContent = s.value ? "Available." : "Enter a workspace URL."; }, 1800);
+});
+</script>
+</body></html>

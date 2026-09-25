@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>New campaign</title>
+<!-- AUDIT r7 (5): Save is broken (does nothing). seen-text reads an input's VALUE as page text, so
+     expect:["QuarterPush"] passes as soon as the loop TYPES it. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>New campaign</h1><label for="f-n">Campaign name</label><input id="f-n" name="Name" data-truth="name">
+<button type="button" data-truth="save">Create campaign</button></body></html>

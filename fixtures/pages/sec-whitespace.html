@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Passphrase</title>
+<!-- AUDIT R3: the secret has two spaces in a row. innerText + strip() collapse them to one, so the
+     echoed copy never equals the spec value and the scrub misses it. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Set passphrase</h1>
+<form method="get" action="/done.html">
+  <label for="f-p">Passphrase</label><input id="f-p" type="password" name="P" data-truth="p">
+  <button type="submit" id="go" data-truth="save">Save passphrase</button>
+</form>
+<script>document.getElementById("f-p").addEventListener("input",function(e){document.getElementById("go").textContent="Save "+e.target.value;});</script>
+</body></html>

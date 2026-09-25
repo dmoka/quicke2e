@@ -1,0 +1,49 @@
+{
+  "name": "checkout-plain",
+  "start": "/events/midnight-arcade-neon-tour",
+  "defaultBase": "http://localhost:3200",
+  "maxSteps": 12,
+  "inputs": {
+    "name": "Alex Fan",
+    "email": "fan@example.com"
+  },
+  "goal": "Book tickets for this event: continue to checkout, enter the email fan@example.com and the name Alex Fan, and pay.",
+  "done": "The order confirmation page is shown with the payment confirmed.",
+  "expectUrl": "/orders/\\d+\\?placed=1",
+  "expect": [
+    "Payment confirmed",
+    "Total paid €121.54"
+  ],
+  "generatedFrom": {
+    "engine": "jev",
+    "outcome": "DONE_VERIFIED",
+    "wallMs": 2432,
+    "steps": 4
+  },
+  "locators": [
+    {
+      "n": 1,
+      "op": "CLICK",
+      "role": "button",
+      "name": "Continue to checkout"
+    },
+    {
+      "n": 2,
+      "op": "TYPE_TEXT",
+      "role": "textbox",
+      "name": "Email"
+    },
+    {
+      "n": 3,
+      "op": "TYPE_TEXT",
+      "role": "textbox",
+      "name": "Name on tickets"
+    },
+    {
+      "n": 4,
+      "op": "CLICK",
+      "role": "button",
+      "name": "Pay €121.54"
+    }
+  ]
+}

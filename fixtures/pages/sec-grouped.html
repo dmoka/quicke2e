@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pay</title>
+<!-- AUDIT round 4 (R6): the page echoes a card number GROUPED with dashes into the title, grouped
+     with spaces into the button, and as "ending 6789" in a status line. Tests the fuzzy scrub:
+     whitespace-flexible matching does not cover dashes; a last-4 tail is shorter than the 8-char head. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Pay</h1>
+<form method="get" action="/done.html">
+  <label for="f-c">Card number</label><input id="f-c" name="C" data-truth="c" inputmode="numeric">
+  <button type="submit" id="go" data-truth="save">Pay now</button>
+  <p><a id="edit" href="#">Change card</a></p>
+</form>
+<script>document.getElementById("f-c").addEventListener("input",function(e){var v=e.target.value,g=v.replace(/(\d{4})(?=\d)/g,"$1-");
+document.title="Pay with "+g; document.getElementById("go").textContent="Pay with "+v.replace(/(\d{4})(?=\d)/g,"$1 ");
+document.getElementById("edit").textContent="Change card ending "+v.slice(-4);});</script>
+</body></html>

@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Contact</title>
+<!-- DEFECT 4: label matching is a naive substring test (hasSpec/specValue use
+     label.includes(key)). {name:"Zed"} matches First/Middle/Last/Company Name and fills
+     all four; a key that is not a literal substring of any label offers zero fields. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>New contact</h1>
+<form method="get" action="/done.html">
+  <label for="f-first">First Name</label>
+  <input id="f-first" name="First" data-truth="first">
+
+  <label for="f-middle">Middle Name</label>
+  <input id="f-middle" name="Middle" data-truth="middle">
+
+  <label for="f-last">Last Name</label>
+  <input id="f-last" name="Last" data-truth="last">
+
+  <label for="f-company">Company Name</label>
+  <input id="f-company" name="Company" data-truth="company">
+
+  <button type="submit" data-truth="save">Save contact</button>
+</form>
+</body></html>

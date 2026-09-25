@@ -1,0 +1,75 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Thread</title>
+<!-- AUDIT 2026-09-24: BUTTON starvation on a very long page. 60 "Helpful" buttons precede the
+     reply form. PRIORITY (loop.mjs:37) ranks textbox 0, button 1, so the reply textbox survives the
+     budget of 30 but the submit button is button #61 and is cut in document order. table.html
+     covers LINKS; this covers the same defect for the rank the fix promoted. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Release 4.2 discussion</h1>
+<article><p>Comment 1: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (1)</button></article>
+<article><p>Comment 2: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (2)</button></article>
+<article><p>Comment 3: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (3)</button></article>
+<article><p>Comment 4: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (4)</button></article>
+<article><p>Comment 5: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (5)</button></article>
+<article><p>Comment 6: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (6)</button></article>
+<article><p>Comment 7: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (7)</button></article>
+<article><p>Comment 8: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (8)</button></article>
+<article><p>Comment 9: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (9)</button></article>
+<article><p>Comment 10: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (10)</button></article>
+<article><p>Comment 11: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (11)</button></article>
+<article><p>Comment 12: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (12)</button></article>
+<article><p>Comment 13: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (13)</button></article>
+<article><p>Comment 14: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (14)</button></article>
+<article><p>Comment 15: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (15)</button></article>
+<article><p>Comment 16: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (16)</button></article>
+<article><p>Comment 17: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (17)</button></article>
+<article><p>Comment 18: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (18)</button></article>
+<article><p>Comment 19: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (19)</button></article>
+<article><p>Comment 20: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (20)</button></article>
+<article><p>Comment 21: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (21)</button></article>
+<article><p>Comment 22: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (22)</button></article>
+<article><p>Comment 23: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (23)</button></article>
+<article><p>Comment 24: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (24)</button></article>
+<article><p>Comment 25: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (25)</button></article>
+<article><p>Comment 26: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (26)</button></article>
+<article><p>Comment 27: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (27)</button></article>
+<article><p>Comment 28: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (28)</button></article>
+<article><p>Comment 29: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (29)</button></article>
+<article><p>Comment 30: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (30)</button></article>
+<article><p>Comment 31: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (31)</button></article>
+<article><p>Comment 32: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (32)</button></article>
+<article><p>Comment 33: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (33)</button></article>
+<article><p>Comment 34: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (34)</button></article>
+<article><p>Comment 35: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (35)</button></article>
+<article><p>Comment 36: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (36)</button></article>
+<article><p>Comment 37: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (37)</button></article>
+<article><p>Comment 38: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (38)</button></article>
+<article><p>Comment 39: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (39)</button></article>
+<article><p>Comment 40: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (40)</button></article>
+<article><p>Comment 41: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (41)</button></article>
+<article><p>Comment 42: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (42)</button></article>
+<article><p>Comment 43: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (43)</button></article>
+<article><p>Comment 44: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (44)</button></article>
+<article><p>Comment 45: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (45)</button></article>
+<article><p>Comment 46: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (46)</button></article>
+<article><p>Comment 47: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (47)</button></article>
+<article><p>Comment 48: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (48)</button></article>
+<article><p>Comment 49: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (49)</button></article>
+<article><p>Comment 50: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (50)</button></article>
+<article><p>Comment 51: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (51)</button></article>
+<article><p>Comment 52: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (52)</button></article>
+<article><p>Comment 53: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (53)</button></article>
+<article><p>Comment 54: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (54)</button></article>
+<article><p>Comment 55: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (55)</button></article>
+<article><p>Comment 56: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (56)</button></article>
+<article><p>Comment 57: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (57)</button></article>
+<article><p>Comment 58: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (58)</button></article>
+<article><p>Comment 59: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (59)</button></article>
+<article><p>Comment 60: this rollout went fine for us, no regressions after a week.</p><button type="button">Helpful (60)</button></article>
+<form method="get" action="/done.html">
+  <label for="f-reply">Your reply</label>
+  <textarea id="f-reply" name="Reply" data-truth="reply"></textarea>
+  <button type="submit" data-truth="post">Post reply</button>
+</form>
+</body></html>

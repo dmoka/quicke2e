@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Billing</title>
+<!-- AUDIT r7 (3, false positive): the card ends in 2026, so the last-4 whole-number scrub also
+     rewrites the year in "2026 report". -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>Billing</h1>
+<form method="get" action="/done.html"><label for="f-c">Card number</label><input id="f-c" name="C" data-truth="c">
+<p><a href="/done.html?y=2024">2024 report</a> · <a href="/done.html?y=2025">2025 report</a> · <a href="/done.html?y=2026">2026 report</a></p>
+</form></body></html>

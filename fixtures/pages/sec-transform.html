@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unlock</title>
+<!-- AUDIT R1: the page echoes a TRANSFORMED secret (upper-cased into the title, URL-encoded into
+     a button). scrub() in src/secret.mjs matches the exact value only. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Unlock vault</h1>
+<form method="get" action="/done.html">
+  <label for="f-pw">Password</label><input id="f-pw" type="password" name="Pw" data-truth="pw">
+  <button type="submit" id="go" data-truth="save">Unlock</button>
+</form>
+<script>document.getElementById("f-pw").addEventListener("input",function(e){var v=e.target.value;
+document.title="Unlock "+v.toUpperCase(); document.getElementById("go").textContent="Unlock with "+encodeURIComponent(v);});</script>
+</body></html>

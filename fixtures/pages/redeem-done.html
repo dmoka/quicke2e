@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Receipt</title></head>
+<body style="font-family:system-ui;padding:16px"><script src="/truth.js"></script>
+<h1>Receipt</h1><p id="out"></p>
+<script>var c=new URLSearchParams(location.search).get("f1")||"";
+document.getElementById("out").textContent=c?("Access code accepted: "+c):"No code submitted.";</script>
+</body></html>

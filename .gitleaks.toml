@@ -1,0 +1,8 @@
+# The security test suite and fixtures contain FAKE secrets on purpose ("sk-live-TRUNC-...",
+# "sk-live-NEWKEY-..."): they are the values the scrubber must keep away from the engine.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "fake secrets used by the security tests and fixtures"
+paths = ['''^test/''', '''^fixtures/''']

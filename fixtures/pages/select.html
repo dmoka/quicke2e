@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Plan</title>
+<!-- DEFECT 2: native <select>. Options dedupe to the placeholder (compact() keys on node),
+     SELECT has no dispatch branch in loop.mjs so it falls through to WAIT, and checkGoal
+     reads innerText, which a <select> renders identically before and after a selection. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Subscription</h1>
+<form method="get" action="/done.html">
+  <label for="f-team">Team</label>
+  <input id="f-team" name="Team" data-truth="team">
+
+  <label for="f-plan">Plan</label>
+  <select id="f-plan" name="Plan" data-truth="plan">
+    <option value="">Choose a plan…</option>
+    <option value="Starter">Starter</option>
+    <option value="Growth">Growth</option>
+    <option value="Scale">Scale</option>
+  </select>
+
+  <button type="submit" data-truth="save">Save subscription</button>
+</form>
+</body></html>

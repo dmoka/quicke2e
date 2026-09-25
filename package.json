@@ -1,0 +1,47 @@
+{
+  "name": "jevtester",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Unofficial exploratory browser tester: it maps your app, a small decision model (Jev) picks the clicks, your spec supplies the typing, and code decides pass/fail.",
+  "main": "src/loop.mjs",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "fixtures": "node fixtures/run.mjs --checkout ."
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "license": "MIT",
+  "bin": {
+    "jevtester": "bin/jevtester.mjs"
+  },
+  "exports": {
+    ".": "./src/loop.mjs",
+    "./discover": "./src/discover.mjs",
+    "./route": "./src/route.mjs",
+    "./codegen": "./codegen/codegen.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "codegen/codegen.mjs",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "playwright",
+    "e2e",
+    "testing",
+    "browser",
+    "agent",
+    "jev",
+    "exploratory-testing"
+  ]
+}

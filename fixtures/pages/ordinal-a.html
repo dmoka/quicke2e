@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Step 1</title>
+<!-- DEFECT 6: `filled` is a Set of per-snapshot ordinals ("n0", snapshot.js:58,64) but it
+     survives navigation (loop.mjs:54,258). Filling the first control here poisons the
+     first control of the NEXT page, which is a different element with the same ordinal. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Step 1 of 2 — your company</h1>
+<form method="get" action="/ordinal-b.html">
+  <label for="f-company">Company</label>
+  <input id="f-company" name="Company" data-truth="company">
+  <button type="submit" data-truth="continue">Continue</button>
+</form>
+</body></html>

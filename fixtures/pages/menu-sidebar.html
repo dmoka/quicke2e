@@ -1,0 +1,27 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Orders</title>
+<!-- DEFECT 3b: the open-listbox rule keys on role=option OR role=menuitem anywhere in the
+     option set. An Ant-Pro-shaped sidebar carries role=menuitem permanently, so WAIT/DONE/
+     BLOCKED are stripped on EVERY page of such an app, not just while a menu is open. -->
+<style>body{font-family:system-ui;margin:0;display:flex}
+[role=menu]{width:170px;background:#001529;padding:8px 0;min-height:100vh}
+[role=menuitem]{display:block;color:#fff;padding:8px 16px;text-decoration:none}
+main{padding:16px;flex:1;max-width:460px}label{display:block;margin:10px 0 2px}
+input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<div role="menu" aria-label="Main navigation">
+  <a role="menuitem" href="/menu-sidebar.html">Dashboard</a>
+  <a role="menuitem" href="/menu-sidebar.html">Orders</a>
+  <a role="menuitem" href="/table.html">Products</a>
+  <a role="menuitem" href="/table.html">Customers</a>
+  <a role="menuitem" href="/negative.html">Reports</a>
+  <a role="menuitem" href="/negative.html">Settings</a>
+</div>
+<main>
+  <h1>Order 4417</h1>
+  <form method="get" action="/done.html">
+    <label for="f-title">Order title</label>
+    <input id="f-title" name="Title" data-truth="title">
+    <button type="submit" data-truth="save">Save order</button>
+  </form>
+</main>
+</body></html>

@@ -1,0 +1,282 @@
+{
+ "commit": "918e0e2",
+ "date": "2026-09-24",
+ "flow": "TicketBay checkout-plain (examples/ticketbay/flows.mjs)",
+ "pass_check": "SQL: one new paid order, right name/email/total (bench/headtohead.mjs)",
+ "claude_cost": "total_cost_usd as reported by `claude -p --output-format json` (API-equivalent)",
+ "note": "The first jev batch ran during a hosted-latency spike (median 11.6 s); it was re-run right after (median 3.05 s). Both batches are kept.",
+ "runs": [
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 1,
+   "pass": true,
+   "wallMs": 11290,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 2,
+   "pass": true,
+   "wallMs": 11632,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 3,
+   "pass": true,
+   "wallMs": 11769,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 4,
+   "pass": true,
+   "wallMs": 11211,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 5,
+   "pass": true,
+   "wallMs": 13074,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "local",
+   "run": 1,
+   "pass": true,
+   "wallMs": 3091,
+   "cost": 0,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "local",
+   "run": 2,
+   "pass": true,
+   "wallMs": 3084,
+   "cost": 0,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "local",
+   "run": 3,
+   "pass": true,
+   "wallMs": 3018,
+   "cost": 0,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "local",
+   "run": 4,
+   "pass": true,
+   "wallMs": 3064,
+   "cost": 0,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "local",
+   "run": 5,
+   "pass": true,
+   "wallMs": 2975,
+   "cost": 0,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "claude",
+   "model": "sonnet",
+   "run": 1,
+   "pass": true,
+   "wallMs": 27521,
+   "cost": 0.1219988,
+   "turns": 8,
+   "apiMs": 13786,
+   "said": "confirmed\" for order TB-00316, 2 tickets for Alex Fan.\n\nDONE",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "sonnet",
+   "run": 2,
+   "pass": true,
+   "wallMs": 22678,
+   "cost": 0.08844699999999997,
+   "turns": 9,
+   "apiMs": 12446,
+   "said": "rmed\" with 2 tickets for Alex Fan, total \u20ac121.54 paid.\n\nDONE",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "sonnet",
+   "run": 3,
+   "pass": true,
+   "wallMs": 19690,
+   "cost": 0.0828526,
+   "turns": 8,
+   "apiMs": 9651,
+   "said": "firmed\" for order TB-00316, paid \u20ac121.54 for Alex Fan.\n\nDONE",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "sonnet",
+   "run": 4,
+   "pass": true,
+   "wallMs": 20908,
+   "cost": 0.08828939999999999,
+   "turns": 9,
+   "apiMs": 10928,
+   "said": "status \"Paid\" for order TB-00316 (2 tickets, \u20ac121.54).\n\nDONE",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "sonnet",
+   "run": 5,
+   "pass": true,
+   "wallMs": 21666,
+   "cost": 0.08833020000000001,
+   "turns": 9,
+   "apiMs": 11561,
+   "said": "confirmed\" shown, Paid status, 2 tickets for Alex Fan.\n\nDONE",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "opus",
+   "run": 1,
+   "pass": true,
+   "wallMs": 25058,
+   "cost": 0.14872899999999997,
+   "turns": 8,
+   "apiMs": 15133,
+   "said": " I booked 2, the number already filled in on the event page.",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "opus",
+   "run": 2,
+   "pass": true,
+   "wallMs": 25958,
+   "cost": 0.0909922,
+   "turns": 8,
+   "apiMs": 15989,
+   "said": " demo, so it used a test card and no real money was charged.",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "opus",
+   "run": 3,
+   "pass": true,
+   "wallMs": 22936,
+   "cost": 0.09408820000000001,
+   "turns": 8,
+   "apiMs": 13171,
+   "said": "has a \"Cancel order\" option; cancelling now refunds \u20ac115.64.",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "opus",
+   "run": 4,
+   "pass": true,
+   "wallMs": 25337,
+   "cost": 0.09097079999999999,
+   "turns": 8,
+   "apiMs": 15274,
+   "said": "give a number of tickets, so I kept the page's default of 2.",
+   "error": null
+  },
+  {
+   "arm": "claude",
+   "model": "opus",
+   "run": 5,
+   "pass": true,
+   "wallMs": 26145,
+   "cost": 0.0916684,
+   "turns": 8,
+   "apiMs": 16146,
+   "said": "give a number of tickets, so I kept the page's default of 2.",
+   "error": null
+  }
+ ],
+ "jev_rerun": [
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 1,
+   "pass": true,
+   "wallMs": 2962,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 2,
+   "pass": true,
+   "wallMs": 3131,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 3,
+   "pass": true,
+   "wallMs": 3213,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 4,
+   "pass": true,
+   "wallMs": 3036,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  },
+  {
+   "arm": "jev",
+   "model": "jev",
+   "run": 5,
+   "pass": true,
+   "wallMs": 3052,
+   "cost": 0.000152964,
+   "steps": 4,
+   "verdict": "DONE_VERIFIED"
+  }
+ ]
+}

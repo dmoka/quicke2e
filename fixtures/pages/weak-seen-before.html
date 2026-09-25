@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Unlock</title>
+<!-- AUDIT r7 (2, leak): the weak password "summer" is also an ordinary word on the page BEFORE
+     typing ("Summer sale"), so its echo is not detected and "Unlock with summer" is sent. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<p>Summer sale: 20% off.</p>
+<form method="get" action="/done.html"><label for="f-p">Password</label><input id="f-p" type="password" name="Pw" data-truth="p">
+<button type="submit" id="go" data-truth="save">Unlock</button></form>
+<script>document.getElementById("f-p").addEventListener("input",function(e){document.getElementById("go").textContent="Unlock with "+e.target.value;});</script>
+</body></html>

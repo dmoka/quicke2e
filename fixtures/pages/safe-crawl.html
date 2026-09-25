@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Admin</title>
+<!-- AUDIT: `discover --safe` promises "never clicks a control whose name looks final or
+     destructive" (src/discover.mjs:15 DESTRUCTIVE regex). Every control below changes data and
+     none of their names match it. Each one reports itself to the truth log when it fires. -->
+<style>body{font-family:system-ui;padding:16px}</style></head><body><script src="/truth.js"></script>
+<h1>Admin</h1>
+<button type="button" data-truth="MUTATE-empty-trash">Empty trash</button>
+<button type="button" data-truth="MUTATE-wipe">Wipe cache and sessions</button>
+<button type="button" data-truth="MUTATE-publish">Publish to production</button>
+<button type="button" data-truth="MUTATE-hu" >Összes törlése</button>
+<button type="button" aria-label="Trash" data-truth="MUTATE-icon">&#128465;</button>
+<button type="button" role="switch" aria-checked="false" aria-label="Maintenance mode" data-truth="MUTATE-switch"
+  onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')">Maintenance mode</button>
+<p><a href="/wiped.html?id=7">Item 7 — ×</a></p>
+</body></html>

@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Codes</title>
+<!-- AUDIT r9: source-level redaction cuts the matched element's TEXT from other strings.
+     A: CSS text-transform upper-cases the containing button's name ("aaaa-4821-zz" -> "AAAA-4821-ZZ").
+     C: the .bc element is inside a same-origin iframe.
+     E: the same code written differently elsewhere (aria-label "EEEE 5555 6666" vs text "EEEE-5555-6666"). -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>Codes</h1>
+<p><button type="button" style="text-transform:uppercase">Copy <span class="bc">aaaa-4821-zz</span></button></p>
+<iframe src="/redact2-inner.html" title="codes" style="height:60px;border:0"></iframe>
+<p><span class="bc">EEEE-5555-6666</span> <button type="button" aria-label="Copy code EEEE 5555 6666">Copy</button></p>
+<form method="get" action="/done.html"><label for="f-n">Nickname</label><input id="f-n" name="Nick" data-truth="nick">
+<button type="submit" data-truth="save">Save settings</button></form></body></html>

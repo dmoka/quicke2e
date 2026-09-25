@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Lookup</title>
+<!-- AUDIT SECURITY S3: an SPA writes the typed value into document.title; state.title is sent. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}input,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Customer lookup</h1>
+<form method="get" action="/done.html">
+  <label for="f-ssn">Social security number</label><input id="f-ssn" name="Ssn" data-truth="ssn">
+  <button type="submit" data-truth="save">Look up</button>
+</form>
+<script>document.getElementById("f-ssn").addEventListener("input",function(e){document.title="Lookup "+e.target.value;});</script>
+</body></html>

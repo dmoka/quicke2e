@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Card</title>
+<!-- AUDIT r10: attacks on the whole-token / 4-char rule of src/redact.mjs.
+     A: a 3-digit CVC in .bc ("737") is below 4 alnum chars, so its copy in another label is not cut.
+     B: the .bc text "AB12CD34" reappears GLUED to other text ("Code:AB12CD34x" / "refAB12CD34"). -->
+<style>body{font-family:system-ui;padding:16px}button{margin:4px}label{display:block}</style></head><body><script src="/truth.js"></script>
+<p>CVC <span class="bc">737</span> <button type="button" aria-label="Copy security code 737">Copy</button></p>
+<p>Voucher <span class="bc">AB12CD34</span> <button type="button">Apply Code:AB12CD34x</button> <a href="/done.html?v=1">refAB12CD34 details</a></p>
+<form method="get" action="/done.html"><label for="f-n">Nickname</label><input id="f-n" name="Nick" data-truth="nick">
+<button type="submit" data-truth="save">Save settings</button></form></body></html>

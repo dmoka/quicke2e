@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Profile</title>
+<!-- AUDIT 2026-09-24: keyFor() (loop.mjs:55-61) returns the FIRST spec key that is a substring of
+     the label, in the spec's insertion order. With inputs {name, username}, "Username" contains
+     "name", so the Username field receives the NAME value, and "Display name" is offered a value
+     the spec never meant for it. Different from ambiguous.html (one key -> many fields): here a
+     second key exists and is shadowed by the first. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Create profile</h1>
+<form method="get" action="/done.html">
+  <label for="f-name">Name</label>
+  <input id="f-name" name="Name" data-truth="name">
+  <label for="f-user">Username</label>
+  <input id="f-user" name="Username" data-truth="username">
+  <label for="f-display">Display name</label>
+  <input id="f-display" name="Display" data-truth="display">
+  <button type="submit" data-truth="save">Create profile</button>
+</form>
+</body></html>

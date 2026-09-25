@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Transfer</title>
+<!-- AUDIT SECURITY S5: an autocomplete INPUT with role=combobox holding a value. It is not a
+     "fill" action, so the "(filled)" rule does not apply; the click action's value is sent as v. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}input,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Transfer</h1>
+<form method="get" action="/done.html">
+  <label for="f-acct">Recovery account</label><input id="f-acct" role="combobox" aria-expanded="false" name="Acct" value="SECRETCOMBO-991">
+  <label for="f-memo">Memo</label><input id="f-memo" name="Memo" data-truth="memo">
+  <button type="submit" data-truth="save">Send transfer</button>
+</form></body></html>

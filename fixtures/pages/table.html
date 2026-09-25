@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Creators</title>
+<!-- DEFECT 1: budget starvation. 60 repeated rows of controls eat the option budget
+     in document order, so the pagination link at the bottom is never offered. -->
+<style>body{font-family:system-ui;margin:0}nav{padding:8px 16px;background:#111}nav a{color:#fff;margin-right:12px}
+main{padding:16px}table{border-collapse:collapse}td{border-bottom:1px solid #ddd;padding:4px 8px}footer{padding:16px}</style>
+</head><body><script src="/truth.js"></script>
+<nav><a href="/table.html">Creators</a><a href="/negative.html">Reports</a></nav>
+<main><h1>Creators — page 1 of 2</h1>
+<table><tbody id="rows"></tbody></table></main>
+<footer>
+  <a href="/table2.html" id="next" data-truth="next">Next page</a>
+</footer>
+<script>
+var h="";for(var i=1;i<=60;i++){h+='<tr><td><input type="checkbox" aria-label="Select creator '+i+'"></td>'+
+'<td><a href="/negative.html">Creator '+i+'</a></td>'+
+'<td><button type="button">Edit creator '+i+'</button></td>'+
+'<td><button type="button">Archive creator '+i+'</button></td></tr>';}
+document.getElementById("rows").innerHTML=h;
+</script>
+</body></html>

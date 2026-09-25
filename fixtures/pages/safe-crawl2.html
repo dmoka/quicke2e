@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Deploys</title>
+<!-- AUDIT round 4 (C2): safe mode now clicks only OPENERS (aria-haspopup/expanded, tab, combobox).
+     Each control below is an opener by markup and also changes data when clicked. -->
+<style>body{font-family:system-ui;padding:16px}</style></head><body><script src="/truth.js"></script>
+<h1>Deploys</h1>
+<button type="button" aria-haspopup="menu" aria-expanded="false" data-truth="MUTATE-haspopup-deploy"
+  onclick="this.setAttribute('aria-expanded','true');document.getElementById('m').hidden=false">Ship it</button>
+<div id="m" role="menu" hidden>
+  <div role="menuitem" tabindex="0" data-truth="MUTATE-menuitem">Roll back production</div>
+</div>
+<div role="tablist"><button role="tab" aria-selected="true">Staging</button>
+  <button role="tab" aria-selected="false" data-truth="MUTATE-tab">Go live</button></div>
+<label for="f-auto">Environment</label>
+<select id="f-auto" data-truth="MUTATE-select-autosave" onchange="navigator.sendBeacon('/_truth', JSON.stringify({truth:'MUTATE-select-change',type:'change'}))">
+  <option>staging</option><option>production</option></select>
+</body></html>

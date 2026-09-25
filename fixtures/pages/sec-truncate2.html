@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signing key</title>
+<!-- AUDIT final (R2b/R2c): the echo starts at char 36 of the label, and compact() cuts labels at 44.
+     So only the first 8 characters of the secret are sent. The whole-value match fails. The 12-char
+     head is not used for secrets of 12 or fewer chars, and for longer ones 8 visible chars are
+     shorter than the head. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Signing key</h1>
+<form method="get" action="/done.html">
+  <label for="f-k">Signing token</label><input id="f-k" name="K" data-truth="k">
+  <button type="submit" id="go" data-truth="save">Save token</button>
+</form>
+<script>document.getElementById("f-k").addEventListener("input",function(e){document.getElementById("go").textContent="Replace the signing key for team to "+e.target.value;});</script>
+</body></html>

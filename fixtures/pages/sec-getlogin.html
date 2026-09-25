@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Legacy login</title>
+<!-- AUDIT R8: a legacy GET login form. Submitting it puts the password in the URL query, which
+     lands in step.url / finalUrl in the trace and in edge.toUrl in the discover map on disk. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Legacy login</h1>
+<form method="get" action="/done.html">
+  <label for="f-u">Username</label><input id="f-u" name="User" data-truth="u">
+  <label for="f-pw">Password</label><input id="f-pw" type="password" name="Pw" data-truth="pw">
+  <button type="submit" data-truth="save">Log in</button>
+</form></body></html>

@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<!-- AUDIT SECURITY S2: the app echoes the typed value into a BUTTON's text ("Send link to x").
+     The field content is withheld, but the button label is not. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}input,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Magic link</h1>
+<form method="get" action="/done.html">
+  <label for="f-code">Recovery code</label><input id="f-code" name="Code" data-truth="code">
+  <button type="submit" id="go" data-truth="save">Verify code</button>
+</form>
+<script>document.getElementById("f-code").addEventListener("input",function(e){document.getElementById("go").textContent="Verify code "+e.target.value;});</script>
+</body></html>

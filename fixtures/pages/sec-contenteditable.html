@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door</title>
+<!-- AUDIT SECURITY S1: an UNLABELLED contenteditable. accName() falls back to the element's own
+     innerText, so its CONTENT becomes its label ("l"), its criteria text and its history line. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}input,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Site access</h1>
+<form method="get" action="/done.html">
+  <label for="f-site">Site name</label><input id="f-site" name="Site" data-truth="site">
+  <div contenteditable="true" style="border:1px solid #ccc;padding:6px;margin-top:10px">Door code 4471-SECRETCE</div>
+  <button type="submit" data-truth="save">Save site</button>
+</form></body></html>

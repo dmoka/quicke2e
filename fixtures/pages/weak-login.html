@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<!-- AUDIT r7 (2, false positive): the word "admin" is on NO page before it is typed as the weak
+     password, so the next page's ordinary "Admin" link is misread as an echo and scrubbed. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>Sign in</h1>
+<form method="get" action="/weak-dash.html">
+<label for="f-u">Username</label><input id="f-u" name="User" data-truth="u">
+<label for="f-p">Password</label><input id="f-p" type="password" name="Pw" data-truth="p">
+<button type="submit" data-truth="save">Sign in</button></form></body></html>

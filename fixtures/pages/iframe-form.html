@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Billing</title>
+<!-- AUDIT 2026-09-24: the form is inside a SAME-ORIGIN iframe (the embedded-checkout / legacy
+     admin pattern). snapshot.js runs in the top document only (loop.mjs:278 page.evaluate), and
+     act() uses page.locator/page.getByRole, which do not descend into frames. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Billing</h1>
+<p>Update the card holder below.</p>
+<iframe src="/iframe-inner.html" title="Billing form" style="width:100%;height:260px;border:1px solid #ccc"></iframe>
+</body></html>

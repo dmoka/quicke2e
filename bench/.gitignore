@@ -1,0 +1,5 @@
+scratch/
+stacks/node_modules/
+stacks/dist/
+results/*.jsonl.tmp
+proposal/node_modules

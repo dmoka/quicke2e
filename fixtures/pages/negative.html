@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Reports</title>
+<!-- DEFECT 7: negative control. Exactly one element here may be offered. Everything else is
+     invisible by one of six mechanisms, or is prose bait that only *mentions* controls.
+     Nobody in the field asserts what must NOT appear, and two of today's bugs were that shape. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}
+.zero{width:0;height:0;overflow:hidden}.offscreen{position:absolute;left:-9999px}
+.clear{opacity:0}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Reports</h1>
+
+<p>This page describes, in prose only, a button labelled &ldquo;Phantom Submit&rdquo;, a link called
+&ldquo;Ghost Report&rdquo; and a dropdown named &ldquo;Spectre Filter&rdquo;. None of them exist.
+Choose the Continue control to proceed.</p>
+
+<form method="get" action="/done.html">
+  <input type="hidden" name="csrf" value="decoy-hidden-input">
+  <button type="button" hidden>Decoy hidden attribute</button>
+  <a href="/done.html" style="display:none">Decoy display none</a>
+  <button type="button" style="visibility:hidden">Decoy visibility hidden</button>
+  <div class="zero"><button type="button">Decoy zero size wrapper</button></div>
+  <div class="clear"><a href="/done.html">Decoy opacity zero</a></div>
+  <div aria-hidden="true"><button type="button">Decoy aria hidden</button></div>
+  <button type="button" disabled>Decoy disabled</button>
+  <a href="/done.html" class="offscreen">Decoy offscreen</a>
+  <select style="display:none"><option>Decoy select option</option></select>
+
+  <button type="submit" id="real-continue" data-truth="continue">Continue</button>
+</form>
+</body></html>

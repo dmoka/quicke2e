@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Access</title>
+<!-- DEFECT 5: labelFor() never reads aria-labelledby, so MUI-shaped fields fall back to
+     their name attribute ("f1"/"f2") and become unaddressable. Compounded by norm()
+     stripping U+200B: the decoy prose below is byte-different from the expected string
+     but normalises to it, so checkGoal reports success with nothing typed. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}.lbl{display:block;margin:10px 0 2px;color:#333}
+input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}
+.hint{color:#777;font-size:13px;margin-top:20px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Redeem access</h1>
+<!-- Client-side validation keeps an empty submit ON this page. That is ordinary app behaviour,
+     and it is what lets checkGoal reach the decoy prose below: the loop only asserts from
+     step 2 onward (loop.mjs `i > 0`), so a trap on the start page is invisible unless the
+     first action leaves the loop standing on it. -->
+<form method="get" action="/redeem-done.html" onsubmit="if(!this.f1.value){document.getElementById('err').textContent='Enter a code.';return false;}">
+  <span class="lbl" id="lbl-code">Access code</span>
+  <input id="field-code" name="f1" aria-labelledby="lbl-code" data-truth="code">
+
+  <span class="lbl" id="lbl-ref">Referral code</span>
+  <input id="field-ref" name="f2" aria-labelledby="lbl-ref" data-truth="ref">
+
+  <button type="submit" data-truth="save">Redeem</button>
+</form>
+<p id="err" style="color:#b00"></p>
+<p class="hint">Example: an accepted redemption reads &ldquo;Access&#8203; code accepted: ABC123&rdquo; on the receipt.</p>
+</body></html>

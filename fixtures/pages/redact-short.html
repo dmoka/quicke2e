@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Orders</title>
+<!-- AUDIT r9 (false positive): a SHORT redacted text ("42", a displayed PIN) is cut from every other
+     string, so "Order 4217" becomes "Order <redacted>17" and "€42" becomes "€<redacted>". -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<p>Card PIN hint: <span class="bc">42</span></p>
+<ul><li><a href="/done.html?order=4217">Order 4217 (€15)</a></li><li><a href="/done.html?order=5501">Order 5501 (€42)</a></li>
+<li><a href="/done.html?order=3342">Order 3342 (€8)</a></li></ul></body></html>

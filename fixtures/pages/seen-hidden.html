@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout</title>
+<!-- AUDIT r7 (5): Pay renders BOTH states and hides the success one. ?mode= picks how:
+     opacity:0, a collapsed panel (height:0; overflow:hidden), off-screen, or font-size:0.
+     src/seen-text.js uses checkVisibility({visibilityProperty:true}), which none of these trip. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>
+<h1>Checkout</h1><button type="button" id="pay" data-truth="pay">Pay now</button><div id="out"></div>
+<script>var m=new URLSearchParams(location.search).get("mode")||"opacity";
+var css={opacity:"opacity:0",collapsed:"height:0;overflow:hidden",offscreen:"position:absolute;left:-10000px",fontzero:"font-size:0"}[m];
+document.getElementById("pay").onclick=function(){document.getElementById("out").innerHTML=
+'<p style="color:#b00">Payment failed. Card declined.</p><div style="'+css+'"><p>Payment confirmed</p></div>';};</script>
+</body></html>

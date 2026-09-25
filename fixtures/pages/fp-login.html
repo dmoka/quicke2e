@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+<!-- AUDIT final (FP): scrub FALSE POSITIVES. Weak test passwords ("password", "admin") are common in
+     seed data. The fuzzy scrub replaces every case-insensitive match plus the rest of the word, so
+     it also rewrites real labels: the field "Password", the link "Admin", "Administrator". The model
+     then chooses among "<password>" options, and codegen builds locators from scrubbed names. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<nav><a href="/done.html?nav=admin">Admin</a> · <a href="/done.html?nav=administrators">Administrators</a> · <a href="/done.html?nav=help">Help</a></nav>
+<h1>Sign in</h1>
+<form method="get" action="/done.html">
+  <label for="f-u">Username</label><input id="f-u" name="User" data-truth="u">
+  <label for="f-pw">Password</label><input id="f-pw" type="password" name="Pw" data-truth="pw">
+  <button type="submit" data-truth="save">Sign in</button>
+</form></body></html>

@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Newsletter</title>
+<!-- AUDIT 2026-09-24: the whole form lives in an OPEN shadow root (a web component).
+     snapshot.js:124 walks document.querySelectorAll(SEL), which does not pierce shadow roots,
+     so the loop offers zero fields and zero buttons. Playwright's getByRole DOES pierce open
+     shadow roots, so the generated-spec side could act here; the explorer cannot. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Newsletter</h1>
+<signup-form data-truth="host"></signup-form>
+<script>
+customElements.define("signup-form", class extends HTMLElement {
+  connectedCallback() {
+    const r = this.attachShadow({ mode: "open" });
+    r.innerHTML = '<style>label{display:block;margin:10px 0 2px}input{padding:6px;width:100%}button{margin-top:12px;padding:8px 14px}</style>' +
+      '<form method="get" action="/done.html">' +
+      '<label for="f-mail">Email</label><input id="f-mail" name="Email">' +
+      '<button type="submit">Subscribe</button></form>';
+  }
+});
+</script>
+</body></html>

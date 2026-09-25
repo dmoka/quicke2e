@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Security</title>
+<!-- AUDIT R5 (class b): secrets the PAGE shows, not from the spec and not secret-labelled:
+     a button label, a link, a native select option (values map + option criteria). -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Security settings</h1>
+<p><button type="button">Copy recovery code ABCD-EFGH-SHOWN1</button></p>
+<p><a href="/done.html?dl=1">Download backup codes 7731-SHOWN2</a></p>
+<form method="get" action="/done.html">
+  <label for="f-card">Default payment</label>
+  <select id="f-card" name="Card"><option>Visa ending 4242 exp 09/29 SHOWN3</option><option>Mastercard ending 5555 SHOWN4</option></select>
+  <label for="f-nick">Nickname</label><input id="f-nick" name="Nick" data-truth="nick">
+  <button type="submit" data-truth="save">Save settings</button>
+</form></body></html>

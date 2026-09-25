@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Settings</title>
+<!-- AUDIT 2026-09-24: the only evidence of success is a TRANSIENT toast. Save shows a spinner that
+     mutates the DOM every 50 ms for 1,300 ms (past settle()'s 1,200 ms cap), then "Settings saved"
+     for 300 ms, then nothing. No URL change. The goal check runs once per step, after settle, so it
+     can sample before the toast and after it, never during. Real apps do exactly this. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input,select,textarea{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Notification settings</h1>
+<label><input type="checkbox" id="f-digest" data-truth="digest" style="width:auto"> Weekly digest</label>
+<button type="button" id="save" data-truth="save">Save settings</button>
+<div id="spin" aria-live="polite"></div>
+<div id="toast" role="status" style="position:fixed;bottom:16px;right:16px"></div>
+<script>
+var saves = 0;
+document.getElementById("save").addEventListener("click", function () {
+  saves++;
+  var sp = document.getElementById("spin"), i = 0, on = document.getElementById("f-digest").checked;
+  var iv = setInterval(function () { sp.textContent = "Saving" + ".".repeat(i++ % 4); }, 50);
+  setTimeout(function () {
+    clearInterval(iv); sp.textContent = "";
+    var to = document.getElementById("toast");
+    to.textContent = on ? "Settings saved: weekly digest on" : "Settings saved: weekly digest off";
+    setTimeout(function () { to.textContent = ""; }, 300);
+  }, 1300);
+});
+</script>
+</body></html>

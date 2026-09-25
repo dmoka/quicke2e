@@ -1,0 +1,28 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    # Model-free: snapshot, discover, routing, WEAK_ASSERTION, codegen. No key, no cost.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+  flows:
+    # The fixture flows on the hosted Jev engine. Runs only when the repo has the secret.
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.OPENROUTER_API_KEY != ''
+      - uses: actions/setup-node@v4
+        if: env.OPENROUTER_API_KEY != ''
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npx playwright install --with-deps chromium
+        if: env.OPENROUTER_API_KEY != ''
+      - run: node fixtures/run.mjs --checkout . --engine jev --n 1
+        if: env.OPENROUTER_API_KEY != ''

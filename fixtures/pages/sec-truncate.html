@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Rotate</title>
+<!-- AUDIT R2: the page echoes a long secret into a button label. compact() cuts labels at 44 chars
+     (loop.mjs label.slice(0, 44)), so only a PREFIX of the secret is sent and the exact-value scrub
+     never matches it. -->
+<style>body{font-family:system-ui;padding:16px;max-width:560px}label{display:block;margin:10px 0 2px}input,select{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style></head><body><script src="/truth.js"></script>
+<h1>Rotate key</h1>
+<form method="get" action="/done.html">
+  <label for="f-k">API key</label><input id="f-k" name="K" data-truth="k">
+  <button type="submit" id="go" data-truth="save">Rotate key</button>
+</form>
+<script>document.getElementById("f-k").addEventListener("input",function(e){document.getElementById("go").textContent="Rotate to "+e.target.value;});</script>
+</body></html>

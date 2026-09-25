@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Step 2</title>
+<!-- DEFECT 6 (page 2): the Project field is ordinal n0 here, the same ordinal Company had
+     on page 1, so its TYPE_TEXT option is suppressed as "already filled". -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}label{display:block;margin:10px 0 2px}
+input{padding:6px;width:100%;box-sizing:border-box}button{margin-top:12px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Step 2 of 2 — your project</h1>
+<form method="get" action="/done.html">
+  <label for="f-project">Project</label>
+  <input id="f-project" name="Project" data-truth="project">
+  <button type="submit" data-truth="finish">Finish</button>
+</form>
+</body></html>

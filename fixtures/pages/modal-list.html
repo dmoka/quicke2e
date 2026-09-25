@@ -1,0 +1,46 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Country</title>
+<!-- DEFECT 3: a long option list inside a modal dropdown. listboxOpen strips WAIT/DONE/BLOCKED
+     the moment any role=option is present, and 60 options at PRIORITY 0 fill the whole budget,
+     so the escape hatch disappears exactly when the list is truncated. The in-list filter box
+     is the only remaining way out; this fixture measures whether it survives the budget. -->
+<style>body{font-family:system-ui;padding:16px;max-width:520px}
+#list{border:1px solid #888;max-height:260px;overflow:auto;margin-top:8px}
+#list [role=option]{padding:4px 8px;cursor:pointer}
+#filter{padding:6px;width:100%;box-sizing:border-box}
+button{padding:8px 14px;margin-top:12px}.hidden{display:none}</style>
+</head><body><script src="/truth.js"></script>
+<h1>Shipping</h1>
+<button type="button" id="trigger" aria-haspopup="listbox" aria-expanded="false" data-truth="trigger">Choose country</button>
+<div id="list" class="hidden" role="listbox" aria-label="Country">
+  <label for="filter">Filter country list</label>
+  <input id="filter" data-truth="filter" autocomplete="off">
+  <div id="opts"></div>
+</div>
+<p>Selected: <span id="sel">none</span></p>
+<form method="get" action="/done.html"><input type="hidden" name="Country" id="hidCountry">
+  <button type="submit" data-truth="save">Save address</button></form>
+<script>
+var C=("Albania Algeria Andorra Angola Argentina Armenia Australia Austria Belgium Belize Benin Bhutan Bolivia Brazil "+
+"Brunei Bulgaria Burundi Cambodia Cameroon Canada Chad Chile Colombia Croatia Cyprus Denmark Ecuador Egypt Estonia "+
+"Ethiopia Fiji Finland France Gabon Georgia Germany Ghana Greece Guyana Hungary Iceland India Ireland Israel Italy "+
+"Jamaica Japan Jordan Kenya Kuwait Latvia Lebanon Liberia Malta Mexico Monaco Morocco Namibia Nepal Zimbabwe").split(" ");
+var o=document.getElementById("opts");
+o.innerHTML=C.map(function(c){return '<div role="option" data-truth="opt-'+c+'">'+c+'</div>';}).join("");
+// ?open=1 lands with the list already expanded, the way an autocomplete does on focus.
+// Without it the loop never opens the list and the truncation defect is never exercised.
+if(new URLSearchParams(location.search).get("open")){
+  document.getElementById("list").classList.remove("hidden");
+  document.getElementById("trigger").setAttribute("aria-expanded","true");}
+document.getElementById("trigger").onclick=function(){
+  var l=document.getElementById("list");l.classList.toggle("hidden");
+  this.setAttribute("aria-expanded",String(!l.classList.contains("hidden")));};
+document.getElementById("filter").oninput=function(){
+  var v=this.value.toLowerCase();
+  [].forEach.call(o.children,function(d){d.style.display=d.textContent.toLowerCase().indexOf(v)<0?"none":"";});};
+o.onclick=function(e){if(e.target.getAttribute("role")!=="option")return;
+  document.getElementById("sel").textContent=e.target.textContent;
+  document.getElementById("hidCountry").value=e.target.textContent;
+  document.getElementById("list").classList.add("hidden");
+  document.getElementById("trigger").setAttribute("aria-expanded","false");};
+</script>
+</body></html>

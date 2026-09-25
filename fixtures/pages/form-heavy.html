@@ -1,0 +1,55 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>New campaign</title>
+<!-- DEFECT 1b: the OTHER side of the ranking tension. A form whose submit button sits after a
+     long nav, plus five OPTIONAL comboboxes. Promote links to the same rank as buttons and the
+     nav eats the budget in document order, so "Create campaign" is never offered at all — the
+     create-campaign break that the PRIORITY revert was made for. Sidebar names deliberately
+     collide with the combobox labels (Clients/Client, Owners/Owner) to reproduce README #10. -->
+<style>body{font-family:system-ui;margin:0;display:flex}
+nav{width:150px;background:#111;padding:6px 0;min-height:100vh}
+nav a{display:block;color:#fff;padding:4px 12px;font-size:13px;text-decoration:none}
+main{padding:16px;flex:1;max-width:520px}label{display:block;margin:10px 0 2px;font-weight:600}
+input{padding:6px;width:100%;box-sizing:border-box}
+[role=combobox]{padding:6px;width:100%;text-align:left;background:#fff;border:1px solid #999}
+[role=listbox]{border:1px solid #888;margin-top:2px}[role=option]{padding:4px 8px;cursor:pointer}
+.hidden{display:none}button[type=submit]{margin-top:14px;padding:8px 14px}</style>
+</head><body><script src="/truth.js"></script>
+<nav id="nav"></nav>
+<main>
+  <h1>New campaign</h1>
+  <form method="get" action="/done.html">
+    <label for="f-name">Campaign name</label>
+    <input id="f-name" name="Name" data-truth="name">
+    <div id="combos"></div>
+    <button type="submit" data-truth="save">Create campaign</button>
+  </form>
+</main>
+<script>
+var LINKS=("Clients Owners Budgets Regions Templates Dashboard Inbox Creators Campaigns Invoices "+
+"Reports Settings Billing Members Roles Audit Exports Imports Webhooks Tokens "+
+"Domains Brands Assets Tags Segments Lists Rules Alerts Usage Support").split(" ");
+document.getElementById("nav").innerHTML=LINKS.map(function(t){
+  return '<a href="/form-heavy.html">'+t+'</a>';}).join("");
+
+// Five OPTIONAL Radix-shaped comboboxes: the trigger is a <button role=combobox> whose text
+// carries the chosen value, which is why el.value is always empty on one.
+var CB=[["client","Client","Pick a client…","Acme DevTools,Bluefin Labs,Corvid Media,Dunlin Co"],
+        ["owner","Owner","Pick an owner…","Ada,Bran,Cleo,Dara"],
+        ["tier","Budget tier","Pick a tier…","Bronze,Silver,Gold,Platinum"],
+        ["region","Region","Pick a region…","EMEA,APAC,LATAM,NA"],
+        ["template","Template","Pick a template…","Blank,Launch,Seasonal,Always-on"]];
+document.getElementById("combos").innerHTML=CB.map(function(c){
+  return '<label for="cb-'+c[0]+'">'+c[1]+'</label>'+
+    '<button type="button" role="combobox" id="cb-'+c[0]+'" aria-expanded="false" data-truth="cb-'+c[0]+'">'+c[2]+'</button>'+
+    '<div role="listbox" id="lb-'+c[0]+'" class="hidden" aria-label="'+c[1]+'">'+
+    c[3].split(",").map(function(o){return '<div role="option" data-truth="opt-'+c[0]+'">'+o+'</div>';}).join("")+
+    '</div>';}).join("");
+document.getElementById("combos").onclick=function(e){
+  var t=e.target;
+  if(t.getAttribute("role")==="combobox"){
+    var lb=document.getElementById("lb-"+t.id.slice(3)),open=lb.classList.toggle("hidden");
+    t.setAttribute("aria-expanded",String(!open));return;}
+  if(t.getAttribute("role")==="option"){
+    var box=t.parentElement,trg=document.getElementById("cb-"+box.id.slice(3));
+    trg.textContent=t.textContent;trg.setAttribute("aria-expanded","false");box.classList.add("hidden");}};
+</script>
+</body></html>
