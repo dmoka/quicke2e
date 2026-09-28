@@ -1,6 +1,6 @@
 {
   "name": "jevtester",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Unofficial exploratory browser tester: it maps your app, a small decision model (Jev) picks the clicks, your spec supplies the typing, and code decides pass/fail.",
   "main": "src/loop.mjs",
