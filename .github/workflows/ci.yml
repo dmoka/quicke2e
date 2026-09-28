@@ -11,6 +11,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - run: python3 -m unittest local-engine/test_server.py   # local engine prompt logic, no model
   flows:
     # The fixture flows on the hosted Jev engine. Runs only when the repo has the secret.
     runs-on: ubuntu-latest

@@ -1,160 +1,207 @@
-"""Local decision engine for agent-browser-test. Same wire shape as the Jev /
-Laya engines in src/loop.mjs, so `engine: "local"` is a drop-in swap.
+"""Local decision engine for jevtester (`--engine local`). Apple Silicon.
 
   POST /  {state, questions:{action:{criteria, instructions:{goal, rules}}}}
        -> {answers:{action:{choice, confidence, probabilities}}, timing, usage}
 
-It never generates text. The option ids are mapped to single letters, one prefill
-runs, and we read the logits of exactly those letter tokens. The model therefore
-cannot return anything that was not offered, and the confidence is a real softmax
-over the offered set rather than a self-report.
+It never generates text. The page state, the goal and the offered options go into one structured
+prompt; the model reads the next-token logits of the option LABELS only, and a softmax over those is
+the answer. It cannot return an option that was not offered.
+
+Two open decision models, both trained on this exact prompt shape:
+
+  eikos-4b    (default) caiovicentino1/Eikos-4B-MLX-4bit, MIT, ~4.6 GB, MLX.
+              Labels A-Z then AA, AB, ... -- up to 100 options in one pass.
+  shisa-de-1  (fast)    Shisa DE-1, Gemma 4 26B-A4B MoE (3.8B active), Apache-2.0, ~15 GB+,
+              run through llama.cpp (`brew install llama.cpp`); this server starts llama-server
+              itself and downloads the public GGUF on first run. Labels A-Z; more options are
+              decided in groups of 26, then a final between the group winners.
+
+The prompt format (a system instruction plus a JSON user message of evidence, criterion and
+lettered options) follows SemIf by TheoLeeCJ (github.com/TheoLeeCJ/SemIf, MIT), which both models
+were trained on.
+
+  python server.py                      # eikos-4b on :8822
+  python server.py --model shisa-de-1   # needs llama-server on PATH
 """
-import argparse, json, math, os, time, resource
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import argparse, json, math, resource, shutil, subprocess, time, urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import mlx.core as mx
-from mlx_lm import load as mlx_load
-
-LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-DEFAULT_RULES = ("Choose the one operation that advances the goal from this page. "
-                 "Do not repeat a step that is already satisfied. "
-                 "Fill required fields before submitting.")
-
-MODEL = None
-TOK = None
-LETTER_ID = {}
-SERVED = 0
-
-
-def letter_id(ch):
-    if ch not in LETTER_ID:
-        LETTER_ID[ch] = TOK.encode(ch, add_special_tokens=False)[-1]
-    return LETTER_ID[ch]
+PROFILES = {
+    "eikos-4b": {"backend": "mlx", "repo": "caiovicentino1/Eikos-4B-MLX-4bit", "labels": 100},
+    "shisa-de-1": {"backend": "llamacpp", "hf_repo": "mradermacher/shisa-de-1-GGUF",
+                   "hf_file": "shisa-de-1.Q4_K_M.gguf", "labels": 26, "ctx": 8192,
+                   "suffix": "<|channel>thought\n<channel|>"},
+}
+SYSTEM = ("Apply the supplied criterion to the supplied evidence. Choose exactly one listed option. "
+          "Respond with only its uppercase letter, with no explanation or reasoning.")
+META = {"WAIT": "wait for the page", "BLOCKED": "nothing can progress",
+        "NONE": "none of these options advances the goal"}
+_U = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+LABELS = list(_U) + [a + b for a in _U for b in _U]
 
 
-RENDER = "terse"
+# ---------------------------------------------------------------- the prompt (model-independent)
+
+def evidence(state):
+    """The page state, compact: each element as one short string ("4 textbox Email = Acme")."""
+    ev = {k: v for k, v in (state or {}).items() if k in ("url", "title", "values", "done", "elements")}
+    if isinstance(ev.get("elements"), list):
+        ev["elements"] = [" ".join(filter(None, [str(e.get("i", "")), e.get("r", ""), e.get("l", "")]))
+                          + (f" = {e['v']}" if e.get("v") else "") + (" (popup)" if e.get("p") else "")
+                          for e in ev["elements"]]
+    return ev
 
 
-def option_text(key, desc):
-    """One criterion rendered for the prompt. loop.mjs sends '<OP> <n> <label>'.
-
-    Prefill runs at ~700 tok/s here, so prompt length is latency. Measured on the
-    13-case discriminator (local-engine/latency.py): terse and verbose both score
-    13/13, terse is ~20% shorter and ~20% faster. Keeping the goal-specific DONE
-    description scored *worse* (12/13) as well as slower — the loop's own
-    deterministic DONE check is what decides completion anyway, so the model does
-    not need to be told what success looks like."""
-    op = key.split(":")[0]
-    parts = desc.split(" ", 2)
-    label = parts[2] if len(parts) > 2 else desc
-    if RENDER == "terse":
-        return {"WAIT": "wait for the page",
-                "BLOCKED": "nothing can progress",
-                "DONE": "the goal is already complete",
-                "CLICK": f"click {label}",
-                "TYPE_TEXT": f"type into {label}",
-                "SELECT": f"select {label}"}.get(op, desc)
-    if key == "WAIT":
-        return "Wait for the page to finish loading."
-    if key == "BLOCKED":
-        return "Nothing on this page can make progress towards the goal."
-    if key == "DONE":
-        return f"The goal is already complete. {desc}"
-    if op == "CLICK":
-        return f"Click the {label} link or button."
-    if op == "TYPE_TEXT":
-        return f"Type the required text into the {label} field."
-    if op == "SELECT":
-        return f"Select an option from {label}."
-    return desc
+def option_texts(criteria):
+    return [(k, f"{k}: {criteria.get(k) or META.get(k, k)}") for k in criteria]
 
 
-def build_prompt(state, goal, rules, keys, criteria):
-    opts = "\n".join(f"{LETTERS[i]}. {option_text(k, criteria[k])}"
-                     for i, k in enumerate(keys))
-    done = state.get("done") or []
-    els = state.get("elements") or []
-    body = (
-        "You drive a browser to reach a goal. " + rules + " Answer with a single letter.\n\n"
-        f"GOAL: {goal}\n"
-        f"PAGE: {state.get('url', '')} — {state.get('title', '')}\n"
-        + (f"ALREADY DONE: {'; '.join(map(str, done))}\n" if done else "")
-        + (f"CONTROLS ON PAGE: {len(els)}\n" if els else "")
-        + f"\nOPTIONS:\n{opts}\n\nAnswer with one letter only."
-    )
-    msgs = [{"role": "user", "content": body}]
-    try:
-        return TOK.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
-                                       enable_thinking=False)
-    except TypeError:
-        return TOK.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+def messages(ev, criterion, texts, labels):
+    payload = {"evidence": ev, "criterion": criterion,
+               "options": [{"letter": labels[i], "description": d} for i, d in enumerate(texts)]}
+    return [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
 
 
-FLAN = None  # (torch, tokenizer, model, letter_ids) when --backend flan
+def distribution(read, texts, cap):
+    """Probabilities over `texts` from `read(batch)` (one pass, at most `cap` options). Longer lists
+    are split into near-equal groups; the top options of every group go to a final, whose
+    distribution is the answer (options that did not reach the final get 0)."""
+    if len(texts) <= cap:
+        return read(texts)
+    n = -(-len(texts) // cap)
+    size, extra = divmod(len(texts), n)
+    groups, start = [], 0
+    for g in range(n):
+        stop = start + size + (g < extra)
+        groups.append(list(range(start, stop)))
+        start = stop
+    keep = max(1, cap // n)
+    finalists, rest = [], []
+    for idx in groups:
+        p = read([texts[i] for i in idx])
+        order = sorted(range(len(idx)), key=lambda j: -p[j])
+        finalists += [idx[j] for j in order[:keep]]
+        rest += [(p[j], idx[j]) for j in order[keep:]]
+    # free places in the final go to the next most likely options of any group
+    finalists += [i for _, i in sorted(rest, key=lambda r: -r[0])[:max(0, cap - len(finalists))]]
+    finalists.sort()
+    final = distribution(read, [texts[i] for i in finalists], cap)
+    out = [0.0] * len(texts)
+    for i, q in zip(finalists, final):
+        out[i] = q
+    return out
 
 
-def decide_flan(state, goal, rules, keys, criteria):
-    """MindAct / WebLINX formulation: lettered multiple choice, reading the first
-    decoder step's logits restricted to the letter tokens. 7x faster than the 4B
-    decoder here, and multiple choice is in-distribution for Flan-T5."""
-    torch, tok, model, lids = FLAN
-    keys = keys[:26]
-    done = state.get("done") or []
-    opts = "\n".join(f"{LETTERS[i]}. {option_text(k, criteria[k])}"
-                     for i, k in enumerate(keys))
-    prompt = (f"{rules}\n\nGoal: {goal}\n"
-              f"Page: {state.get('url', '')} ({state.get('title', '')})\n"
-              + (f"Already done: {'; '.join(map(str, done))}\n" if done else "")
-              + f"\nWhich action advances the goal?\n{opts}\n\nAnswer:")
-    enc = tok(prompt, return_tensors="pt", truncation=True, max_length=1024).to("mps")
-    dec = torch.tensor([[model.config.decoder_start_token_id]]).to("mps")
-    with torch.no_grad():
-        lg = model(**enc, decoder_input_ids=dec).logits[0, 0]
-    return keys, [float(lg[lids[i]]) for i in range(len(keys))], int(enc["input_ids"].shape[1])
+def softmax(xs):
+    m = max(xs)
+    e = [math.exp(x - m) for x in xs]
+    t = sum(e)
+    return [x / t for x in e]
+
+
+# ---------------------------------------------------------------- backends
+
+class MLXBackend:
+    def __init__(self, repo):
+        import mlx.core as mx
+        from mlx_lm import load
+        self.mx = mx
+        self.model, self.tok = load(repo)
+        self.ids = {}
+
+    def label_id(self, label):
+        if label not in self.ids:
+            self.ids[label] = self.tok.encode(label, add_special_tokens=False)[-1]
+        return self.ids[label]
+
+    def read(self, msgs, labels):
+        prompt = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                              enable_thinking=False)
+        ids = self.tok.encode(prompt, add_special_tokens=False)
+        logits = self.model(self.mx.array([ids]))[0, -1]
+        self.mx.eval(logits)
+        return [float(logits[self.label_id(l)]) for l in labels], len(ids)
+
+    def peak_mb(self):
+        return round(self.mx.get_peak_memory() / 1e6, 1)
+
+
+class LlamaCppBackend:
+    def __init__(self, prof, port):
+        exe = shutil.which("llama-server")
+        if not exe:
+            raise SystemExit("shisa-de-1 needs llama.cpp: brew install llama.cpp")
+        self.base, self.suffix = f"http://127.0.0.1:{port}", prof["suffix"]
+        self.proc = subprocess.Popen([exe, "--hf-repo", prof["hf_repo"], "--hf-file", prof["hf_file"],
+                                      "-c", str(prof["ctx"]), "-ngl", "99", "--port", str(port)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(1800):   # the first run downloads ~15 GB
+            try:
+                if json.loads(urllib.request.urlopen(self.base + "/health", timeout=2).read()).get("status") == "ok":
+                    return
+            except Exception:
+                pass
+            if self.proc.poll() is not None:
+                raise SystemExit("llama-server exited while starting")
+            time.sleep(2)
+        raise SystemExit("llama-server did not become ready")
+
+    def _post(self, path, body):
+        req = urllib.request.Request(self.base + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+        return json.loads(urllib.request.urlopen(req, timeout=600).read())
+
+    def read(self, msgs, labels):
+        prompt = self._post("/apply-template", {"messages": msgs})["prompt"]
+        if self.suffix and not prompt.endswith(self.suffix):
+            prompt += self.suffix
+        out = self._post("/completion", {"prompt": prompt, "n_predict": 1, "n_probs": 64,
+                                         "temperature": 0, "cache_prompt": True})
+        first = (out.get("completion_probabilities") or [{}])[0]
+        seen = {}
+        for e in first.get("top_logprobs") or first.get("probs") or []:
+            t = (e.get("token") or e.get("tok_str") or "").strip()
+            if t and t not in seen:
+                seen[t] = e.get("logprob", math.log(max(e.get("prob", 1e-12), 1e-12)))
+        floor = min(seen.values(), default=0.0) - 5
+        return [seen.get(l, floor) for l in labels], out.get("tokens_evaluated", 0)
+
+    def peak_mb(self):
+        return None
+
+
+# ---------------------------------------------------------------- server
+
+PROFILE, BACKEND, SERVED = None, None, 0
 
 
 def decide(payload):
     q = payload["questions"]["action"]
     criteria = q["criteria"]
     instr = q.get("instructions") or {}
-    goal = instr.get("goal", "")
-    rules = instr.get("rules", DEFAULT_RULES)
     state = payload.get("state") or {}
     if isinstance(state, str):
         state = json.loads(state)
+    pairs = option_texts(criteria)
+    ev = evidence(state)
+    criterion = "\n".join(filter(None, [instr.get("goal", ""), instr.get("rules", "")]))
+    tokens = [0]
 
-    keys = list(criteria)
-    truncated = len(keys) > len(LETTERS)
-    keys = keys[:len(LETTERS)]
+    def read(batch):
+        labels = LABELS[:len(batch)]
+        logits, n = BACKEND.read(messages(ev, criterion, batch, labels), labels)
+        tokens[0] += n
+        return softmax(logits)
 
-    if FLAN is not None:
-        t0 = time.perf_counter()
-        keys, raw, n_in = decide_flan(state, goal, rules, keys, criteria)
-        infer_ms = (time.perf_counter() - t0) * 1000
-        ids = range(n_in)
-    else:
-        text = build_prompt(state, goal, rules, keys, criteria)
-        ids = TOK.encode(text)
-        t0 = time.perf_counter()
-        logits = MODEL(mx.array([ids]))[0, -1]
-        mx.eval(logits)
-        infer_ms = (time.perf_counter() - t0) * 1000
-        raw = [float(logits[letter_id(LETTERS[i])]) for i in range(len(keys))]
-
-    top = max(range(len(raw)), key=lambda i: raw[i])
-    m = max(raw)
-    exp = [math.exp(v - m) for v in raw]
-    s = sum(exp)
-    probs = [v / s for v in exp]
-    return {
-        "answers": {"action": {
-            "choice": keys[top],
-            "confidence": round(probs[top], 4),
-            "probabilities": {keys[i]: round(probs[i], 4) for i in range(len(keys))},
-        }},
-        "timing": {"infer_ms": round(infer_ms, 1), "queued_ms": 0, "truncated": truncated},
-        "usage": {"input_tokens": len(ids), "output_tokens": 0, "cost": 0},
-    }
+    t0 = time.perf_counter()
+    probs = distribution(read, [t for _, t in pairs], PROFILE["labels"])
+    ms = (time.perf_counter() - t0) * 1000
+    dist = {k: p for (k, _), p in zip(pairs, probs)}
+    choice = max(dist, key=dist.get)
+    return {"answers": {"action": {"choice": choice, "confidence": round(dist[choice], 4),
+                                   "probabilities": {k: round(v, 4) for k, v in dist.items()}}},
+            "timing": {"infer_ms": round(ms, 1), "queued_ms": 0, "truncated": False},
+            "usage": {"input_tokens": tokens[0], "output_tokens": 0, "cost": 0}}
 
 
 class H(BaseHTTPRequestHandler):
@@ -166,26 +213,15 @@ class H(BaseHTTPRequestHandler):
             SERVED += 1
         except Exception as e:
             out = {"error": f"{type(e).__name__}: {e}"}
-        b = json.dumps(out).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
+        self._send(out)
 
     def do_GET(self):
-        # ru_maxrss is bytes on macOS. MLX allocates in the unified pool, so
-        # report its own peak too — that is the number that matters for "will
-        # this fit alongside the app under test".
-        b = json.dumps({
-            "ok": True, "model": os.environ.get("LOCAL_MODEL", ""),
-            "render": RENDER,
-            "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, 1),
-            "backend": "flan" if FLAN is not None else "mlx",
-            "mlx_peak_mb": round(mx.get_peak_memory() / 1e6, 1),
-            "mlx_active_mb": round(mx.get_active_memory() / 1e6, 1),
-            "decisions_served": SERVED,
-        }).encode()
+        self._send({"ok": True, "model": PROFILE["name"], "decisions_served": SERVED,
+                    "mlx_peak_mb": BACKEND.peak_mb(),
+                    "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, 1)})
+
+    def _send(self, obj):
+        b = json.dumps(obj).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(b)))
@@ -197,26 +233,29 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="mlx-community/Qwen3.5-9B-MLX-4bit")   # light option: mlx-community/Qwen3-4B-Instruct-2507-4bit
+    ap = argparse.ArgumentParser(description="jevtester local decision engine")
+    ap.add_argument("--model", choices=sorted(PROFILES), default="eikos-4b")
     ap.add_argument("--port", type=int, default=8822)
-    ap.add_argument("--render", choices=("terse", "verbose"), default="terse")
-    ap.add_argument("--backend", choices=("mlx", "flan"), default="mlx")
-    a = ap.parse_args()
-    RENDER = a.render
-    os.environ["LOCAL_MODEL"] = a.model
-    if a.backend == "flan":
-        import torch
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        _tok = AutoTokenizer.from_pretrained(a.model)
-        _m = AutoModelForSeq2SeqLM.from_pretrained(a.model).to("mps").eval()
-        FLAN = (torch, _tok, _m,
-                [_tok.encode(c, add_special_tokens=False)[0] for c in LETTERS[:26]])
-    else:
-        MODEL, TOK = mlx_load(a.model)
-    # One warm-up prefill so the first real decision is not paying compile cost.
-    decide({"state": {"url": "/", "title": "warmup", "elements": [], "done": []},
-            "questions": {"action": {"criteria": {"CLICK:1": "CLICK 1 Warm", "DONE": "done"},
-                                     "instructions": {"goal": "warm up"}}}})
-    print(f"local engine ready: {a.model} on :{a.port}", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", a.port), H).serve_forever()
+    ap.add_argument("--llama-port", type=int, default=8823, help="internal port for llama-server (shisa-de-1)")
+    args = ap.parse_args()
+    PROFILE = {**PROFILES[args.model], "name": args.model}
+    BACKEND = MLXBackend(PROFILE["repo"]) if PROFILE["backend"] == "mlx" else LlamaCppBackend(PROFILE, args.llama_port)
+    # Stop llama-server with us on SIGTERM/SIGINT too (Python skips `finally` on a plain SIGTERM,
+    # which left an orphaned llama-server holding ~15 GB).
+    import signal, sys
+    def stop(*_):
+        if isinstance(BACKEND, LlamaCppBackend):
+            BACKEND.proc.terminate()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    decide({"state": {"url": "/", "title": "warmup"}, "questions": {"action": {
+        "criteria": {"CLICK:1": "CLICK 1 Sign in [button]", "WAIT": "wait for the page"},
+        "instructions": {"goal": "Sign in", "rules": ""}}}})
+    print(f"local engine ready: {args.model} on :{args.port}", flush=True)
+    # Single-threaded on purpose: one model on one GPU, one decision at a time.
+    try:
+        HTTPServer(("127.0.0.1", args.port), H).serve_forever()
+    finally:
+        if isinstance(BACKEND, LlamaCppBackend):
+            BACKEND.proc.terminate()

@@ -129,7 +129,8 @@ total). Wall time is the whole command, end to end, including browser or MCP sta
 | | pass | median wall | cost / run |
 |---|---|---|---|
 | **jevtester, `jev` engine** | **5/5** | **3.05 s** | **$0.000153** |
-| jevtester, `local` engine (Qwen3.5-9B) | 5/5 | 4.20 s | $0 |
+| jevtester, `local` engine, Shisa DE-1 | 5/5 | **2.04 s** | $0 |
+| jevtester, `local` engine, Eikos-4B | 5/5 | 4.36 s | $0 |
 | Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 21.67 s | $0.0940 |
 | Claude Code + Playwright MCP, Opus 5.5 | 5/5 | 25.34 s | $0.1033 |
 
@@ -166,12 +167,12 @@ in-page DOM snapshot vs Playwright's aria snapshot vs the CDP accessibility tree
 **A real app: TicketBay** (the practice app of the *AI Agent Engineer* course: Next.js 16 +
 shadcn/Radix + Postgres, production build, data reset before every run; specs in `examples/ticketbay/`):
 
-| spec | jev | local (Qwen3.5-9B) | steps (jev) | wall (jev) | cost (jev) |
+| spec | jev | local (Eikos-4B / Shisa DE-1) | steps (jev) | wall (jev) | cost (jev) |
 |---|---|---|---|---|---|
-| book with a discount code | 5/5 | 5/5 | 8 | 4.3 s | $0.00032 |
-| refund inside the window | 5/5 | 5/5 | 1 | 0.9 s | $0.00003 |
-| refund refused after the event started | 5/5 | 5/5 | 1 | 0.9 s | $0.00003 |
-| plain checkout | 5/5 | 5/5 | 4 | 2.5 s | $0.00015 |
+| book with a discount code | 5/5 | 5/5 / 5/5 | 8 | 4.3 s | $0.00032 |
+| refund inside the window | 5/5 | 5/5 / 5/5 | 1 | 0.9 s | $0.00003 |
+| refund refused after the event started | 5/5 | 5/5 / 5/5 | 1 | 0.9 s | $0.00003 |
+| plain checkout | 5/5 | 5/5 / 5/5 | 4 | 2.5 s | $0.00015 |
 
 The refund spec, run against a copy of TicketBay with the refund-window check removed, fails 5/5: it
 catches the bug (the copy refunded €39.69 after the event started). The Playwright spec emitted from a
@@ -180,9 +181,8 @@ passing checkout run replays 3/3, about 0.8 s each including browser start, with
 **Fixture suite** (`fixtures/`: 59 small hand-written pages, n=3). Each page is a defect found in the
 field or an attack from a ten-round security and robustness audit: shadow DOM, iframes, toasts, secret
 echoes (re-cased, truncated, grouped, URL-encoded, weak), declared redaction through shadow roots and
-iframes, hidden-text false passes, a 150-link page, a safe crawl. **jev 59/59; local (Qwen3.5-9B)
-57/59.** The two local reds: it clicks Save twice on the toast page (the result is right, the grader
-wants exactly one save) and it misreads Admin vs Administrators. Strong spec secrets: 0 leaks.
+iframes, hidden-text false passes, a 150-link page, a safe crawl. **jev 59/59; local Eikos-4B
+58/59; local Shisa DE-1 56/59.** Strong spec secrets: 0 leaks.
 
 ## Engines
 
@@ -190,7 +190,7 @@ wants exactly one save) and it misreads Admin vs Administrators. Strong spec sec
 |---|---|---|
 | `jev` (default) | `OPENROUTER_API_KEY` | hosted, any OS |
 | `vercel` | `AI_GATEWAY_API_KEY` | the same Jev model through the Vercel AI Gateway (not measured for this release) |
-| `local` | `local-engine/server.py` | **Apple Silicon only**, $0, offline. Qwen3.5-9B on MLX (6 GB): TicketBay 20/20; a checkout takes 4.2 s against 3.05 s on Jev. Light option for 8 GB Macs: Qwen3-4B (3 GB, fastest, but misses judgement calls such as applying a discount code before paying). A small LLM used as a constrained chooser: it only picks an option, never writes text. See `local-engine/README.md` |
+| `local` | `local-engine/server.py` | **Apple Silicon only**, $0, offline. Open decision models: **Eikos-4B** (default, 4.1 GB, TicketBay 20/20, fixtures 58/59) or **Shisa DE-1** (`--model shisa-de-1`, 17 GB, needs `brew install llama.cpp`; TicketBay 20/20 and **faster than hosted Jev**: a checkout in 2.0 s against 3.05 s). They only pick an option, never write text. See `local-engine/README.md` |
 
 ## The skill: let a big model invent the cases
 
@@ -215,8 +215,9 @@ judges.
 - **A full crawl changes data.** Use a throwaway database. **`--safe` is best effort, not read-only:** it
   clicks only controls that declare they open something (menus, tabs, dropdowns) and skips links that
   name a destructive verb, but a GET link or an opener with a side effect can still change data.
-- **The `local` engine is slower than Jev** (Qwen3.5-9B: about 0.7 s per decision against about 0.3 s)
-  and a little less accurate on judgement calls; the light Qwen3-4B option fails more of them.
+- **The `local` engines trail Jev slightly on the fixture suite** (58/59 and 56/59 against 59/59).
+  Eikos-4B is slower than Jev (a checkout in 4.4 s against 3.05 s); Shisa DE-1 is faster but needs a
+  32 GB Mac.
 
 ## Design notes
 
