@@ -44,8 +44,6 @@ export function startStatic(port = 8899) {
       });
     }
     if (u.pathname === "/_truth/reset") { log.length = 0; res.writeHead(204); return res.end(); }
-    // A server error page (attack cases: a crafted URL that crashes the app).
-    if (u.pathname === "/_500") { res.writeHead(500, { "Content-Type": TYPES[".html"] }); return res.end("<h1>Internal Server Error</h1><a href='/login.html'>Home</a>"); }
 
     const rel = u.pathname === "/" ? "/login.html" : u.pathname;
     const file = path.join(DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ""));

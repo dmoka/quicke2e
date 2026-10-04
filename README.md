@@ -12,7 +12,6 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#attack-cases">Attack cases</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="#engines">Engines</a> ·
   <a href="#limits">Limits</a>
@@ -74,18 +73,33 @@ export default [{
 
 Requires Node 20 or later.
 
+**1. Install** (`@playwright/test` runs the Playwright specs that `--emit` writes):
+
 ```bash
-npm install -D quicke2e && npx playwright install chromium
-export OPENROUTER_API_KEY=...        # the default jev engine calls OpenRouter
-npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000
+npm i -D quicke2e @playwright/test && npx playwright install chromium
+export OPENROUTER_API_KEY=...        # the default jev engine calls OpenRouter; --engine local needs no key
 ```
 
-On TicketBay, the spec above printed this (hosted Jev, 2026-09-24):
+**2. Write a spec.** Save the example from the top of this page as `quicke2e.spec.mjs` and change
+`start`, `goal`, `inputs` and the assertions to one flow of your app. Assert the page after the last
+action: the run stops on the first snapshot where all assertions hold.
+
+**3. Check it, then run it** (your app must be running):
+
+```bash
+npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000   # rejects a spec that proves nothing
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000
+```
+
+On TicketBay, the example spec printed this (hosted Jev, 2026-09-24):
 
 ```console
 $ npx quicke2e run quicke2e.spec.mjs --base http://localhost:3200
 PASS  book-with-code                8 steps    4.3s  $0.00032  DONE_VERIFIED
 ```
+
+A failed run prints the reason under its line: each assertion that did not hold, a submit held back
+for an empty field, a repeated action (`LOOP`), and required fields left empty.
 
 No app at hand? Clone the repo and run three example flows (`login`, `choose-a-plan`,
 `weekly-digest-toast`) against the bundled fixture pages:
@@ -110,7 +124,8 @@ The browser is visible when you run a command in a terminal. It runs headless wh
 the output is piped, or on Linux with no `DISPLAY` or `WAYLAND_DISPLAY`. `--headed` and `--headless`
 force either mode.
 
-`run` and `check` exit with code 1 when any spec fails or fails the `WEAK_ASSERTION` check.
+`run` and `check` exit with code 1 when any spec fails, fails the `WEAK_ASSERTION` check, or its start
+page is unreachable, and with code 2 on a usage error (an unknown option is an error, not ignored).
 
 ## How it works
 
@@ -151,7 +166,6 @@ Code decides success. It checks the assertions on every snapshot:
 | `expect` | a sighted user sees this text on the page. Hidden, `aria-hidden`, transparent, clipped and off-page text does not count. The values of form controls do not count, because the test typed or chose them |
 | `expectState: [{ role, name, value \| checked \| selected }]` | a control has this state (a chosen option, a checked box, a field's value) |
 | `expectSeen` | this text appeared at any moment since the page loaded, such as a toast |
-| `expectAbsent` | a sighted user does NOT see this text. When it appears, the run stops with outcome `ABSENT_SEEN` and fails |
 
 The run stops on the first snapshot where all assertions hold, and that run passes. Write the assertions
 for the state after the last action: after a submit, assert the page the submit leads to.
@@ -167,8 +181,7 @@ from the spec. QuickE2E never maps a key into a number, date or file field this 
 
 `run` and `check` first load the start page. If the assertion already holds before any step, QuickE2E
 rejects the spec with `WEAK_ASSERTION`, because an assertion that is true on page load passes without
-any work. A spec with `control` is checked on the control page instead (see [Attack cases](#attack-cases)).
-An `expectAbsent` text that is already on the start page fails the check with `ABSENT_ON_START`.
+any work.
 
 ### Codegen
 
@@ -176,47 +189,6 @@ An `expectAbsent` text that is already on the start page fails the check with `A
 locators (`getByRole`) and the same assertions. Each input is read from an environment variable named
 `<FLOW>_<KEY>` (for example `CHECKOUT_PLAIN_EMAIL`). A non-secret input falls back to the spec value. A
 secret input has no fallback, so the credential is never written into the file.
-
-## Attack cases
-
-Attacks are not a separate mode. In every session the agent skill writes happy-path cases first, then
-boundary, refusal and attack cases. When a happy path fails, the attacks on that flow wait. This is the
-attack instruction it follows, word for word:
-
-**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
-- Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
-- Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
-- Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
-- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
-- A closed window: an event that already started, a sold-out show.
-- A finished flow submitted again through its URL.
-- Required fields left empty or filled with garbage.
-
-Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
-
-```js
-// examples/ticketbay/attacks.mjs (TicketBay main, signed in as the seeded customer Anna)
-{ name: "attack-disabled-code-odd-casing", kind: "attack", storageState: ".auth/anna.json",
-  start: "/events/midnight-arcade-neon-tour/checkout?qty=2",
-  inputs: { "discount code": "launch50" },
-  goal: "Apply the discount code launch50.",
-  expect: ["This code is no longer active.", "Total €92.70"],   // the app refuses, the total is unchanged
-  expectAbsent: ["% off tickets"] }                             // the applied-code line never appears
-```
-
-When loading the start URL is the attack (another user's order at `/orders/1`), the assertion holds on
-page load. Give such a spec a `control` path where the app says yes (`/orders/281`, the user's own
-order): `check` runs the `WEAK_ASSERTION` check on the control page, and the run checks the assertion
-on the start page before any step.
-
-On TicketBay main (2026-10-04), both specs in `examples/ticketbay/attacks.mjs` passed 3/3 on `jev` and
-3/3 on `local` Shisa DE-1. The other-user's-order spec passes in 0 steps with no engine call; the code
-spec takes 2 steps.
-
-**Limits of attack cases.** One browser and one action at a time: no simultaneous double clicks, races
-or multi-tab flows. No header, cookie or request-body tampering, and no network-level attacks. Test those
-with API property tests or a code-level adversarial tester. A crafted URL in `start` is in scope. Attack
-only an app you own: the full crawl runs only on localhost unless you pass `--i-own-this-data`.
 
 ## Secrets and redaction
 
@@ -386,10 +358,6 @@ roots and iframes, hidden-text false passes, a 150-link page, a safe crawl.
 
 Strong spec secrets in the suite: 0 leaks.
 
-Attack cases added two pages and five fixtures (2026-10-04): an expired code in odd casing (refused, and
-refused-but-applied), another user's order by URL (refused, and leaked), and a URL that answers HTTP 500.
-`jev` 5/5 and `local` Shisa DE-1 5/5, n=3. Against the code before this change, four of the five fail.
-
 ## Engines
 
 Select an engine with `--engine`. Jev is a model by TypeSafe. QuickE2E is an independent project, not affiliated with TypeSafe.
@@ -437,7 +405,7 @@ prompt format and model licences: [`local-engine/README.md`](local-engine/README
 
 1. reads the map and your source code,
 2. lists the business rules (`rule — file:line`),
-3. invents happy-path, boundary, refusal and [attack](#attack-cases) cases,
+3. invents happy-path, boundary and refusal cases,
 4. writes the spec file and runs `check` and `run`,
 5. reports which failures are app bugs.
 
@@ -479,7 +447,8 @@ quicke2e check <spec.mjs> [--base url]
 | `--trace` | run | write a JSON trace per run, with each step's start time and decision time |
 | `--video` | run | save a WebM per run. With `--trace`, each step in the trace also gets the box of the element it acted on. The video shows typed values |
 | `--allow-weak` | run | run a spec that failed the `WEAK_ASSERTION` check |
-| `--json` | run | print all run records as one JSON array on the last line of stdout (fields: [`AGENTS.md`](AGENTS.md#run-and-read-the-result)) |
+| `--json` | run, check | print all records as one JSON array on the last line of stdout, including flows that never ran (`UNREACHABLE`, `WEAK_ASSERTION`); fields: [`AGENTS.md`](AGENTS.md#run-and-read-the-result) |
+| `--min-confidence` | run | below this engine confidence an action is not executed (default 0.3) |
 | `--headed` / `--headless` | all | force the browser mode |
 
 </details>
@@ -496,12 +465,12 @@ A spec file exports an array of flows (`export default [...]`).
 | `base` | base URL for this flow; overrides `--base` |
 | `goal` | the task in plain English |
 | `inputs` | every value the run types, keyed by field label |
-| `expectUrl`, `expect`, `expectState`, `expectSeen`, `expectAbsent` | the assertions (see [Verify](#3-verify)) |
-| `control` | a path where the app says yes; the `WEAK_ASSERTION` check loads it instead of `start` (see [Attack cases](#attack-cases)) |
-| `kind` | a label for the run record and the output line, such as `"attack"` |
+| `expectUrl`, `expect`, `expectState`, `expectSeen` | the assertions (see [Verify](#3-verify)) |
 | `redact` | CSS selectors and text patterns the engine must never see |
 | `storageState` | Playwright storage state for the browser context |
 | `maxSteps` | step limit (default 14) |
+| `neverClick` | elements the engine is never offered: case-insensitive globs over the whole label (`"Pay*"`, `"*delete*"`) or RegExps. Use it in refusal tests so a failed refusal cannot buy, pay or delete |
+| `minConfidence` | an action the engine picks below this confidence is not executed and counts as BLOCKED (default 0.3, or `--min-confidence`) |
 | `done` | optional plain-English end state, for the reader. The run loop does not send it to the engine |
 
 </details>
@@ -514,11 +483,10 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 | outcome | meaning |
 |---|---|
 | `DONE_VERIFIED` | the assertions held on a snapshot |
-| `ABSENT_SEEN` | an `expectAbsent` text appeared: the app accepted what it must refuse |
-| `SERVER_ERROR` | a page navigation answered with HTTP 5xx. The run fails, whatever the assertions say |
 | `MODEL_BLOCKED` | the engine answered BLOCKED (or a key that was not offered) three times, each time on a page that did not change within 3 s |
 | `NO_SPEC_VALUE` | the run needed a value the spec does not have |
 | `MAX_STEPS` | the step limit ran out |
+| `LOOP` | the same action ran 3 times on a page that did not change; the 4th was not executed |
 | `ERROR` | the run threw an error |
 
 </details>

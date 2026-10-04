@@ -1,0 +1,12 @@
+<!doctype html>
+<!-- v0.3 fixture: a refusal test. The quantity field has min=1, so the browser itself blocks a
+     submit of 0 and the server's refusal message is never shown. A refusal test must not pay:
+     with neverClick: ["Pay*"] the Pay button is never offered to the engine. -->
+<html><head><meta charset="utf-8"><title>Checkout</title></head><body><script src="/truth.js"></script>
+<h1>Checkout</h1>
+<form action="/done.html" method="get">
+  <label for="qty">Tickets</label> <input id="qty" name="qty" type="number" min="1" value="2">
+  <label for="nm">Name on order</label> <input id="nm" name="nm" required>
+  <button type="submit" data-truth="pay">Pay €118.00</button>
+</form>
+</body></html>

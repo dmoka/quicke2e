@@ -1,6 +1,6 @@
 {
   "name": "quicke2e",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Plain-English end-to-end browser tests: a small decision model picks each click, your spec supplies every typed value, code decides pass/fail, and a passing run exports a Playwright spec.",
   "keywords": [

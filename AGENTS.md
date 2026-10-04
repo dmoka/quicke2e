@@ -45,12 +45,11 @@ Flow fields:
 | `expect` | no | array of strings. Each must appear in the text a user sees on the page, as a substring, case-sensitive, after whitespace is collapsed. Form control values do not count |
 | `expectSeen` | no | like `expect`, but passes if the text appeared at any moment since the page loaded (toasts) |
 | `expectState` | no | array of `{ role, name, value, selected, checked, expanded }`; every given key must match one control. `name` = the control's label (exact), `value` = substring |
-| `expectAbsent` | no | array of strings that must NOT appear in the text a user sees (same matching as `expect`). When one appears, the run stops with outcome `ABSENT_SEEN` and fails |
-| `control` | no | a path where the app says yes (the user's own order). The `WEAK_ASSERTION` check loads it instead of `start`, and the run checks the assertion on the start page before any step. Use it when loading `start` is the attack |
-| `kind` | no | a label copied into the run record and the output line. Use `"attack"` for attack specs |
 | `redact` | no | array of CSS selector strings and `RegExp` objects (`/recovery code \S+/i`) |
 | `storageState` | no | Playwright storage state (object or file path), for a logged-in start |
 | `maxSteps` | no | step limit, default 14 |
+| `neverClick` | no | elements never offered to the engine: case-insensitive globs over the whole label (`"Pay*"`) or `RegExp`s |
+| `minConfidence` | no | engine picks below this confidence are not executed (default 0.3) |
 
 All given assertions must hold at the same time. The run checks them on every page snapshot and
 **stops as soon as they all hold**, so the assertions must describe the state after the last action.
@@ -77,41 +76,13 @@ Rules:
    on the start page (`WEAK_ASSERTION`).
 4. **Use `expectSeen` for text that disappears** (toasts) and `expectState` for control state
    (checked, selected, disabled). `expect` reads only text a user sees, not form control values.
-5. **Put content the engine must never see in `redact`** (CSS selectors or `/regex/` patterns).
+5. **In a refusal test, block the success action with `neverClick`** (`neverClick: ["Pay*"]`). If the
+   app does not refuse (or the browser blocks the form first), the run fails without paying, buying or
+   deleting. A refusal spec without it can trigger the side effect it is testing against.
+6. **A dropdown takes its value from `inputs` too**: key = words from the dropdown's label, value = the
+   option's visible text (`country: "Hungary"`). A required dropdown with no key is left unset.
+7. **Put content the engine must never see in `redact`** (CSS selectors or `/regex/` patterns).
    Secret-looking `inputs` values are scrubbed from engine requests automatically.
-
-### Attack cases
-
-**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
-- Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
-- Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
-- Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
-- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
-- A closed window: an event that already started, a sold-out show.
-- A finished flow submitted again through its URL.
-- Required fields left empty or filled with garbage.
-
-Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
-
-```js
-export default [
-  { name: "disabled-code-odd-casing", kind: "attack", storageState: ".auth/anna.json",
-    start: "/events/midnight-arcade-neon-tour/checkout?qty=2",
-    inputs: { "discount code": "launch50" },
-    goal: "Apply the discount code launch50.",
-    expect: ["This code is no longer active.", "Total €92.70"],   // the app refuses, the total is unchanged
-    expectAbsent: ["% off tickets"] },                            // the applied-code line never appears
-  { name: "other-users-order", kind: "attack", storageState: ".auth/anna.json",
-    start: "/orders/1", control: "/orders/281",                   // someone else's order; the user's own
-    goal: "Open order TB-00001.", expect: ["Nothing here"], expectAbsent: ["Total paid"] },
-];
-```
-
-Run the happy paths first. When one fails, the attacks on that flow wait until it passes.
-
-Limits: one browser and one action at a time (no double-click races, no multi-tab flows), and no
-header, cookie, request-body or network tampering (a crafted URL in `start` is in scope). Test those
-with API property tests or a code-level adversarial tester. Attack only an app you own.
 
 ### Run and read the result
 
@@ -127,22 +98,20 @@ npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --engine local
 repeats each flow.
 
 - **Exit code:** `0` = every run passed; `1` = a run failed, a spec failed the `WEAK_ASSERTION`
-  or `ABSENT_ON_START` check, or a start page was unreachable (line `UNREACHABLE <name>: <url> (...). Is the app running?`);
+  check, or a start page was unreachable (line `UNREACHABLE <name>: <url> (...). Is the app running?`);
   `2` = usage error.
-- **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`,
-  then `saw "<text>"` after an `ABSENT_SEEN`, `HTTP <status>` after a `SERVER_ERROR`, and `(<kind>)` when
-  the spec has a `kind`.
+- **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`.
 - **Machine output:** with `--json`, the **last line of stdout** is a JSON array with one record per run.
 
 | record field | type | meaning |
 |---|---|---|
 | `flow` | string | the spec's `name` |
 | `passed` | boolean | the final assertion check: the result to trust |
-| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action three times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`) |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `MODEL_BLOCKED` (the engine found no useful action, or only picks under `minConfidence`, three times on an unchanged page), `LOOP` (the same action ran 3 times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`). Flows that never ran: `UNREACHABLE`, `WEAK_ASSERTION` (and `OK` from `check`) |
+| `assertions` | array | one entry per assertion: `{ kind, value, held, actual? }` on the final page. Read this first on a failure |
+| `heldBack` | array | on a failure: submits that were hidden because a spec field was unset: `{ label, waitingFor, key }` |
+| `loop`, `lowConfidence`, `failedActions`, `emptyRequired` | | on a failure: the repeated action, the best pick under `minConfidence`, actions that threw, required fields still empty |
 | `error` | string or null | the error message when `outcome` is `ERROR` |
-| `absentSeen` | string | only with `ABSENT_SEEN`: the `expectAbsent` text that appeared |
-| `httpStatus` | number | only with `SERVER_ERROR`: the 5xx status |
-| `kind` | string | only when the spec has a `kind` |
 | `finalUrl` | string | the URL when the run ended |
 | `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |
 | `wallMs` | number | total run time in ms |
@@ -152,8 +121,9 @@ repeats each flow.
 Other fields (`base`, `budget`, `decideMs`, `inferMs`, `weakEchoed`, per-step `target`, `inputKey`, `via`,
 `tokens`) are diagnostics. Do not depend on them.
 
-On a failure, read `outcome`, then the last entries of `steps` (the page and the elements the engine
-chose), then `finalUrl`. Add `--trace <dir>` for a full JSON trace per run and `--video <dir>` for a
+On a failure, read `assertions` (which ones did not hold), then `heldBack`, `loop` and `emptyRequired`,
+then the last entries of `steps`. The human output prints the same reasons under the FAIL line.
+`--trace <dir>` also stores, per step, the list of options the engine was offered (`offered`). Add `--trace <dir>` for a full JSON trace per run and `--video <dir>` for a
 WebM recording.
 
 ### Turn a passing run into a CI test

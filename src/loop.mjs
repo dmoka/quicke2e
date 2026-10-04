@@ -18,6 +18,24 @@ const LOCAL_URL = process.env.LOCAL_URL || "http://127.0.0.1:8822";
 // FIX (2026-09-21): was hardcoded to the reference app. A client could not point this at their own app
 // without editing the source. Resolution order: flow.base -> runOnce({base}) -> $APP_BASE -> default.
 const DEFAULT_BASE = process.env.APP_BASE || "http://localhost:3000";
+// v0.3. Below MIN_CONFIDENCE the engine's pick is not executed (counts as BLOCKED); chosen from the
+// fixture suite's measured confidences (see test/core.test.mjs and the 0.3.0 notes). LOOP_LIMIT: the
+// same action on an unchanged page this many times ends the run with outcome LOOP.
+const MIN_CONFIDENCE = 0.3;
+const LOOP_LIMIT = 4;
+// neverClick: strings are case-insensitive globs over the WHOLE label ("Pay*", "*delete*"); RegExps test as-is.
+function neverMatcher(list) {
+  if (!list?.length) return null;
+  const res = list.map((p) => p instanceof RegExp ? p
+    : new RegExp("^" + String(p).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "i"));
+  return (label) => { const l = norm(label); return res.some((r) => { r.lastIndex = 0; return r.test(l); }); };
+}
+// What the page looks like to the loop: URL plus every action's label, value and state.
+function pageSig(snap) {
+  const s = snap.url + "\n" + snap.actions.map((a) => `${a.kind}|${a.label}|${a.value ?? ""}|${a.checked ?? ""}|${a.current_value ?? ""}`).join("\n");
+  let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}
 
 const RULES = "Choose the one operation that advances the goal from this page. " +
   "Do not repeat a step that is already satisfied. Fill required fields before submitting.";
@@ -97,7 +115,7 @@ const fillKey = (url, a) => `${new URL(url).pathname}|${a.role}|${a.label}`;
 // can drop it. Deep-row T3 went 0/40 -> 40/40 across 8 stacks with no representation change.
 const tok = (t) => String(t || "").toLowerCase().split(/[^a-z0-9\u00c0-\u024f]+/).filter((w) => w.length > 1);
 function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
-                 keyOf = (label, role) => keyFor(label, inputs, role), goal = null, typedKeys = new Map()) {
+                 keyOf = (label, role) => keyFor(label, inputs, role), goal = null, typedKeys = new Map(), never = null) {
   let els = [], targets = {}, criteria = {};
   const idx = {};
   const ops = { click: "CLICK", fill: "TYPE_TEXT", select: "SELECT" };
@@ -142,6 +160,9 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     // "password", not "textbox", so this guard never covered it -- and on the rename fixture the
     // model duly clicked the password field, three trials out of three.
     if (op === "CLICK" && (a.role === "textbox" || a.role === "password")) continue;
+    // v0.3: a flow's `neverClick` patterns. The element is never offered, so the engine cannot pick it
+    // (a refusal test once paid: the browser blocked the form, then "Pay" was clicked at 0.22).
+    if (op === "CLICK" && never && never(a.label)) continue;
     if (!(a.node in idx)) { idx[a.node] = raw.length; raw.push({ a, ops: [] }); }
     if (!raw[idx[a.node]].ops.includes(op)) raw[idx[a.node]].ops.push(op);
   }
@@ -153,8 +174,15 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
   const pending = new Set(raw.filter((r) => r.a.form >= 0 && (r.ops.includes("TYPE_TEXT")
     || (r.ops.includes("SELECT") && (!r.a.current_value || keyOf(r.a.selectLabel, "combobox") !== null))))
     .map((r) => r.a.form));
+  // v0.3: remember WHY a submit is missing, so a failed run can say so (field + spec key).
+  const heldBack = [];
   for (let j = raw.length - 1; j >= 0; j--)
-    if (raw[j].a.submit && pending.has(raw[j].a.form)) raw.splice(j, 1);
+    if (raw[j].a.submit && pending.has(raw[j].a.form)) {
+      const f = raw.find((r) => r.a.form === raw[j].a.form && (r.ops.includes("TYPE_TEXT") || r.ops.includes("SELECT")));
+      const fl = f ? (f.a.selectLabel || f.a.label) : null;
+      heldBack.push({ label: raw[j].a.label, waitingFor: fl, key: fl ? keyOf(fl, f.a.selectLabel ? "combobox" : f.a.role) : null });
+      raw.splice(j, 1);
+    }
   // Rank: form controls and buttons first, then links in document order. Links are the
   // repetitive part of a list page (55 creator rows) and the first to be dropped.
   const goalToks = goal ? new Set(tok(goal)) : null;
@@ -217,7 +245,7 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
   ({ els, criteria, targets } = render(keep));
   const dropped = ranked.length - keep.length;
   const lettersTrimmed = lettersLost;
-  return { els, criteria, targets, dropped, lettersTrimmed, total: ranked.length, values,
+  return { els, criteria, targets, dropped, lettersTrimmed, total: ranked.length, values, heldBack,
     render, all: [...ranked].sort((x, y) => x.i - y.i) };
 }
 
@@ -379,29 +407,51 @@ function stateOk(snap, want) {
   }));
 }
 
-// Every text node that appears is remembered for the life of the document (capped).
+// Every text that appears is remembered for the life of the document (capped).
+// v0.3 (saucedemo): an SPA inserts a whole view as ONE element, far over 300 characters, and React
+// splits "Item total: $39.98" into two text nodes. Recording only the inserted root (skipped: too
+// long) or single text nodes ("Item total: $", "39.98") both missed it. So a long inserted element
+// is walked: every element inside it whose full text is under 300 characters is recorded whole.
+// A text change inside an existing element records that element's full text.
 const SEEN_RECORDER = `(() => {
   window.__jevSeen = [];
-  const rec = (n) => { const t = (n.textContent || "").trim(); if (t && t.length < 300 && window.__jevSeen.length < 2000) window.__jevSeen.push(t); };
+  const push = (t) => { t = (t || "").trim(); if (t && t.length < 300 && window.__jevSeen.length < 5000) window.__jevSeen.push(t); };
+  const rec = (n) => {
+    if (n.nodeType === 3) { push(n.parentElement ? n.parentElement.textContent : n.textContent); return; }
+    if (n.nodeType !== 1) return;
+    const t = (n.textContent || "").trim();
+    if (!t) return;
+    if (t.length < 300) { push(t); return; }
+    for (const c of n.childNodes) rec(c);
+  };
   new MutationObserver((ms) => { for (const m of ms) { m.addedNodes.forEach(rec); if (m.type === "characterData") rec(m.target); } })
     .observe(document, { childList: true, subtree: true, characterData: true });
 })();`;
 
-// `expectAbsent` (attack cases): text a user must NOT see -- the success state an attack must never
-// reach (an order confirmation, a refund line). Returns the first such text on the page, or null.
-async function absentSeen(page, flow) {
-  if (!flow.expectAbsent?.length) return null;
+// v0.3: the same checks as checkGoal, one record per assertion, for the "why did it fail" report.
+async function explainGoal(page, flow) {
+  const outl = [];
   try {
+    const url = page.url();
+    if (flow.expectUrl) outl.push({ kind: "expectUrl", value: flow.expectUrl, held: new RegExp(flow.expectUrl).test(url), actual: url });
     const seen = norm(await page.evaluate(`(${SEEN_TEXT})()`));
-    return flow.expectAbsent.find((x) => seen.includes(norm(x))) ?? null;
-  } catch { return null; }
+    for (const x of flow.expect || []) outl.push({ kind: "expect", value: x, held: seen.includes(norm(x)) });
+    if (flow.expectSeen?.length) {
+      const past = norm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
+      for (const x of flow.expectSeen) outl.push({ kind: "expectSeen", value: x, held: seen.includes(norm(x)) || past.includes(norm(x)) });
+    }
+    if (flow.expectState?.length) {
+      const snap = await page.evaluate(`(${SNAPSHOT})()`);
+      for (const w of flow.expectState) outl.push({ kind: "expectState", value: w, held: stateOk(snap, [w]) });
+    }
+  } catch {}
+  return outl;
 }
 
 async function checkGoal(page, flow, snap) {
   try {
     const urlOk = flow.expectUrl ? new RegExp(flow.expectUrl).test(page.url()) : true;
     if (!urlOk) return false;
-    if (await absentSeen(page, flow)) return false;
     // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: form
     // controls contribute nothing (assert them with expectState), hidden/aria-hidden text not at all.
     const need = [...(flow.expect || []), ...(flow.expectSeen || [])];
@@ -453,7 +503,8 @@ async function act(page, action, fn) {
 }
 
 export async function runOnce({ flow, engine = "local", budget = 30, browser: shared, trace,
-                                base, context: ctxOpts, map, route: routeMode = "click", video } = {}) {
+                                base, context: ctxOpts, map, route: routeMode = "click", video,
+                                minConfidence: minConfArg } = {}) {
   base = (flow.base || base || DEFAULT_BASE).replace(/\/$/, "");
   const t0 = performance.now();
   const browser = shared || await chromium.launch({ headless: true });
@@ -466,9 +517,6 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });
   if (flow.expectSeen?.length) await context.addInitScript(SEEN_RECORDER);
   const page = await context.newPage();
-  // A 5xx answer to a main-frame navigation is never a result: the run stops with SERVER_ERROR.
-  let httpStatus = null;
-  page.on("response", (r) => { try { if (r.status() >= 500 && r.request().isNavigationRequest() && r.frame() === page.mainFrame()) httpStatus = r.status(); } catch {} });
   const videoAt = video ? Math.round(performance.now() - t0) : null;
   const steps = [], history = [];
   let outcome = "UNKNOWN", error = null, doneRejects = 0, blocked = 0;
@@ -492,7 +540,15 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   };
   const echoed = () => [...weakTyped];
   const isOwn = (text) => before.has(norm(text).toLowerCase());
-  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null, absentHit = null;
+  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null;
+  // v0.3 SIDE-EFFECT GUARD: an action the engine picks below this confidence is not executed; it
+  // counts as BLOCKED (measured: a refusal test paid at 0.22 once the browser blocked the form).
+  const minConfidence = flow.minConfidence ?? minConfArg ?? MIN_CONFIDENCE;
+  const never = neverMatcher(flow.neverClick);
+  let lastHeldBack = [], lowBest = null;
+  // v0.3 LOOP DETECTION: the same action on an unchanged page, again and again, is not progress
+  // (measured: 8x the same field, 11x the wrong combobox, 24x an autocomplete). Stop and name it.
+  let loopKey = null, loopSig = null, loopN = 0, loopRec = null;
 
   try {
     await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" });
@@ -552,12 +608,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         snap.title = fix(snap.title);
         for (const a of snap.actions) { a.label = fix(a.label); if (a.optionLabel) a.optionLabel = fix(a.optionLabel); }
       }
-      // ATTACK CASES: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
-      // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
-      if (httpStatus) { outcome = "SERVER_ERROR"; break; }
-      if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }
-      // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
-      if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
+      if ((i > 0 || routeRec?.hops?.length) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
 
       // FIX (v1, TicketBay D2): a field whose label contains no spec key (a rename: "Email" ->
       // "E-mail") used to be invisible to the test. Jev now picks WHICH spec key belongs in it --
@@ -566,7 +617,8 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       const keyOf = (label, role) => stuckLabels.has(label) ? null : keyFor(label, flow.inputs, role) ?? keyMap.get(label) ?? null;
       const here = new URL(snap.url).pathname;
       const stuckLabels = new Set([...stuck].filter((k) => k.startsWith(here + "|")).map((k) => k.split("|").slice(2).join("|")));
-      let space = compact(snap, budget, filled, flow.inputs, 3, keyOf, flow.goal, typedKeys);
+      let space = compact(snap, budget, filled, flow.inputs, 3, keyOf, flow.goal, typedKeys, never);
+      lastHeldBack = space.heldBack;
       // FIX (2026-09-21): while a modal listbox/menu is open, its options are the ONLY legal
       // moves -- which is why the snapshot can see nothing else. Offering WAIT/DONE/BLOCKED here
       // makes the model take the escape hatch: measured DONE@0.90, and BLOCKED@0.9997 when DONE
@@ -645,11 +697,16 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       if (d.truncated) { truncs++; console.warn(`[truncated] ${flow.name} step ${i + 1}: the engine `
         + `discarded options past the ${LETTER_CEILING}-letter ceiling -- the model did not see them`); }
 
-      let op = d.choice, tIdx = null, action = null;
+      let op = d.choice, tIdx = null, action = null, low = null;
       if (!["WAIT", "DONE", "BLOCKED"].includes(op)) {
         const [o, ix] = String(d.choice).split(":");
         op = o; tIdx = ix; action = space.targets[o]?.[ix];
         if (!action) op = "BLOCKED";
+        else if (d.confidence != null && d.confidence < minConfidence) {
+          low = { op, label: action.label, confidence: Math.round(d.confidence * 100) / 100 };
+          if (!lowBest || low.confidence > lowBest.confidence) lowBest = low;
+          op = "BLOCKED"; action = null; tIdx = null;
+        }
       }
       // CODEGEN (2026-09-22): `role` and `tag` added. act() already resolves by
       // getByRole(ARIA[action.role], {name: action.label}) at line 232 -- but the step record
@@ -660,7 +717,23 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         role: action?.role ?? null, tag: action?.tag ?? null,
         confidence: d.confidence, ms: Math.round(d.ms), inferMs: d.inferMs, tokens: d.tokens,
         options: Object.keys(space.criteria).length, dropped: space.dropped, truncated: d.truncated,
+        ...(low ? { lowConfidence: low } : {}),
+        ...(space.heldBack?.length ? { heldBack: space.heldBack } : {}),
+        // what the engine could choose from, for the trace (labels already scrubbed)
+        ...(trace ? { offered: Object.values(space.criteria).slice(0, 120) } : {}),
         ...(heats ? { tournament: heats } : {}) };
+
+      // LOOP: same op on the same element while the page looks exactly as it did the last time.
+      if (action && op !== "WAIT") {
+        const key = `${op}|${action.label}|${tIdx}`;
+        const sig = pageSig(snap);
+        loopN = key === loopKey && sig === loopSig ? loopN + 1 : 1;
+        loopKey = key; loopSig = sig;
+        if (loopN >= LOOP_LIMIT) {
+          loopRec = { op, label: action.label, times: loopN - 1 };   // executed; the next one was stopped
+          step.loop = true; steps.push(step); outcome = "LOOP"; break;
+        }
+      }
 
       if (op === "DONE") {
         await page.waitForFunction(READY, null, { timeout: 2000, polling: 50 }).catch(() => {});
@@ -740,21 +813,32 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   } catch (e) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; }
 
   const tLoopEnd = performance.now() - t0;
-  if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
-  const passed = outcome !== "SERVER_ERROR" && await checkGoal(page, flow);
-  // A success marker that appeared after the last step is still a finding, not "got lost".
-  if (!absentHit && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
+  const passed = await checkGoal(page, flow);
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
+  // v0.3: say WHY. Per-assertion results always; the rest only when the run failed.
+  const assertions = await explainGoal(page, flow);
+  const emptyRequired = passed ? [] : await page.evaluate(() => [...document.querySelectorAll(
+    "input[required],select[required],textarea[required],[aria-required=true]")]
+    .filter((el) => el.offsetParent !== null && !String(el.value ?? "").trim() && el.type !== "hidden")
+    .map((el) => (el.labels?.[0]?.innerText || el.getAttribute("aria-label") || el.placeholder || el.name || el.id || "").trim().slice(0, 40))
+    .filter(Boolean)).catch(() => []);
   const videoFile = video ? await page.video()?.path() : null;
   await context.close();
   if (!shared) await browser.close();
-  const rec = { flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}), base, engine, budget, outcome, passed, finalUrl, error,
-    ...(absentHit ? { absentSeen: absentHit } : {}), ...(httpStatus ? { httpStatus } : {}), steps,
+  const rec = { flow: flow.name, base, engine, budget, outcome, passed, finalUrl, error, steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),
     ...(video ? { video: { file: videoFile, at: videoAt, size } } : {}),
+    assertions,
+    ...(!passed ? {
+      ...(loopRec ? { loop: loopRec } : {}),
+      ...(lastHeldBack?.length ? { heldBack: lastHeldBack } : {}),
+      ...(lowBest && outcome === "MODEL_BLOCKED" ? { lowConfidence: lowBest, minConfidence } : {}),
+      failedActions: [...new Map(steps.filter((x) => x.stale).map((x) => [`${x.op}|${x.label}`, { op: x.op, label: x.label }])).values()],
+      emptyRequired,
+    } : {}),
     tLoopEnd: Math.round(tLoopEnd), tCheck: Math.round(tCheck) };
   // SECURITY (audit): the trace on disk is scrubbed too -- a GET form puts a password in finalUrl.
   rec.weakEchoed = echoed();
@@ -768,4 +852,5 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   return rec;
 }
 
-export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, absentSeen, ARIA, LETTER_CEILING };
+export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, explainGoal, ARIA, LETTER_CEILING,
+  neverMatcher, pageSig, MIN_CONFIDENCE, LOOP_LIMIT };

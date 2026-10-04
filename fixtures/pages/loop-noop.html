@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- v0.3 fixture: "Load more" does nothing. Without loop detection the engine clicks it until the
+     step limit (seen in the field: 8x, 11x, 14x, 24x). With it, the run stops with outcome LOOP. -->
+<html><head><meta charset="utf-8"><title>Results</title></head><body><script src="/truth.js"></script>
+<h1>Results</h1>
+<ol id="list"></ol>
+<button id="more" data-truth="more">Load more</button>
+<script>
+const list = document.getElementById("list");
+for (let i = 1; i <= 10; i++) list.append(Object.assign(document.createElement("li"), { textContent: "Result " + i }));
+document.getElementById("more").onclick = () => {};   // broken on purpose
+</script>
+</body></html>
