@@ -1,4 +1,9 @@
-# QuickE2E
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img alt="QuickE2E" src="docs/logo-light.png" width="420">
+  </picture>
+</p>
 
 ![QuickE2E buys two tickets with a discount code on TicketBay, from the home page, in 4.8 seconds](docs/demo.gif)
 
