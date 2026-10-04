@@ -20,6 +20,7 @@ npx quicke2e discover http://localhost:3000 --start / -o quicke2e.map.json
 
 - Full crawl is the default on localhost: it submits forms. Use a throwaway database (`--reset "<cmd>"` to restore seed data).
 - Any other host: use `--safe`, unless the user confirms the data is disposable (`--i-own-this-data`).
+- Pages behind a sign-in: save a session first (see step 4) and pass `--storage state.json`.
 - Read the map: pages, edges, forms, fields, options, and what each form submit led to.
 
 **Pages behind a login.** Save a logged-in browser state once, then use it for the crawl and every flow:
@@ -49,12 +50,31 @@ List every rule as one line: `rule — file:line`.
 
 ## 3. Invent the cases
 
-For each form and each rule, write cases in three kinds:
-1. **Happy path** — the main job of the page works.
+For each form and each rule, write cases in all four kinds, every session, without being asked:
+1. **Happy path** — the main job of the page works. Always first.
 2. **Boundary** — the edge of a rule: last valid day, max quantity, code at its limit.
 3. **Refusal** — the rule must say no: expired window, sold out, wrong code, a started event, a user without the role.
+4. **Attack** — a malicious user, see below.
 
-Prefer the cases a scripted suite does not have. Check the existing tests first and say which rules they skip.
+**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
+- Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
+- Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
+- Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
+- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
+- A closed window: an event that already started, a sold-out show.
+- A finished flow submitted again through its URL.
+- Required fields left empty or filled with garbage.
+
+Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
+
+Mark each attack spec with `kind: "attack"`. Prefer the cases a scripted suite does not have. Check the existing tests first and say which rules they skip.
+
+### Limits of attack cases
+
+- One browser, one action at a time: no simultaneous double clicks, no races, no multi-tab flows.
+- No header, cookie or request-body tampering, and no network-level attacks. A crafted URL in `start` is in scope.
+- Those belong to API property tests or a code-level adversarial tester. Name them in the report as cases for that layer.
+- Attack only an app you own: localhost with a throwaway database, or a host the user confirms with `--i-own-this-data`.
 
 ## 4. Write the spec
 
@@ -64,6 +84,7 @@ One file, `quicke2e.spec.mjs`, exporting an array:
 export default [
   {
     name: "refund-refused-after-start",
+    kind: "attack",
     start: "/orders",
     maxSteps: 14,
     inputs: { email: "buyer@example.com" },          // every typed value comes from here
@@ -71,16 +92,32 @@ export default [
     expectUrl: "/orders/\\d+$",                        // THE ASSERTION
     expect: ["Refunds close when the event starts"],   // THE ASSERTION
     neverClick: ["Confirm refund*"],                   // a refusal test must not complete the action
+    expectAbsent: ["Refunded €"],                      // THE ASSERTION: the success state stays absent
+  },
+  {
+    name: "other-users-order",                         // a load attack: opening the URL IS the attack
+    kind: "attack",
+    start: "/orders/1",                                // someone else's order
+    control: "/orders/281",                            // the user's own order: the assertion must be false here
+    goal: "Open order 1",
+    expect: ["Nothing here"],
+    expectAbsent: ["Total paid"],
   },
 ];
 ```
+
+If the pages need a signed-in user, set `storageState: "auth.json"` on each spec (the login recipe is in
+section 1). Use a seeded demo account.
 
 Rules for the assertion — the assertion IS the test:
 - The run stops on the first snapshot where all assertions hold. Assert the page after the LAST action (after a submit, the page the submit leads to), or the run stops before it.
 - Assert only what is true AFTER the work: a URL that cannot exist before, text that did not exist before, or a control state via `expectState: [{ role, name, value | checked | selected }]`.
 - `expect` is text a sighted user sees. It ignores form controls (a value the test typed or chose is not a result) and hidden text. To check a chosen option or a field's value, use `expectState`. For a toast that disappears, use `expectSeen`.
 - Never assert a label, a button text, or a word that is on the page anyway.
-- For a refusal, assert the refusal text AND that the success state is absent (use a URL that only the refusal page has, or text only the refusal shows).
+- For a refusal, assert the refusal text AND that the success state is absent: `expectAbsent` holds text only success shows. `check` rejects an `expectAbsent` text that is already on the start page (`ABSENT_ON_START`).
+- A load attack (the start URL itself is the attack) needs `control`: a page where the app says yes. `check` then runs the `WEAK_ASSERTION` check on the control page, and the run checks the assertion on the start page before any step.
+- A value the app may accept (a script tag in a name field) is not a refusal case: assert that the next page shows the value as plain text.
+- Say the attack value and every action in the goal ("replace the name on tickets with only spaces, then pay"). With "the given value" the engine did not type into the field (measured: MODEL_BLOCKED 2/2; with the value named, 2/2 passed).
 - **Every refusal case gets `neverClick` for its success action** (`"Pay*"`, `"Place order*"`, `"Delete*"`). If the app wrongly accepts, or the browser blocks the form first, the run then fails without buying, paying or deleting. Measured: a refusal case without it placed a real order.
 - Browser validation (`min`, `max`, `required`, `type=email`) blocks a submit before the app sees it, and its bubble is not page text. Read these attributes in the source before you write a refusal case for them; such a rule is usually tested at a lower level.
 - A dropdown takes its value from `inputs` too: key = words from its label, value = the option's visible text.
@@ -93,8 +130,6 @@ api key, card number, token, …) are always kept out.
 
 **Data between specs.** A spec that changes data (an order, a cancelled event) changes what the next spec sees. Order the specs so they do not collide, or restore seed data before each `run --only <name>`, then re-create `auth.json`.
 
-**Not a quicke2e case:** an authorization check whose expected end state is the start page itself (open `/admin` as a customer, expect "Admins only"). `check` rejects it as `WEAK_ASSERTION`, because nothing has to happen. Write it as a plain Playwright test or an API test.
-
 ## 5. Check, then run
 
 ```bash
@@ -104,10 +139,15 @@ npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.m
 
 A `WEAK_ASSERTION` means the assertion already holds on the start page: rewrite the assertion, never add `--allow-weak` to make it go away.
 
+Run the happy paths first (put them in their own file, or use `--only`). When a happy path fails, report it and hold the boundary, refusal and attack cases on that flow until it passes: on a broken flow, an attack cannot tell a refusal from a breakage.
+
 ## 6. Report
 
-For each failing spec: is it an APP bug (the rule in the source is violated) or a SPEC/TOOL problem (the run never reached the place)? Decide from the reasons first: the lines under each FAIL (or `--json` fields `assertions`, `heldBack`, `loop`, `emptyRequired`) say which assertion did not hold, which submit was held back for which field, and which action repeated. Then read the trace (`--trace runs/`): each step lists what the engine was offered (`offered`). The outcome: `DONE_VERIFIED` = pass; `MAX_STEPS`/`MODEL_BLOCKED`/`LOOP` = the run did not get there; a wrong final page with the success text visible = the app broke a rule.
+For each failing spec: is it an APP bug (the rule in the source is violated) or a SPEC/TOOL problem (the run never reached the place)? Decide from the reasons first: the lines under each FAIL (or `--json` fields `assertions`, `heldBack`, `loop`, `emptyRequired`) say which assertion did not hold, which submit was held back for which field, and which action repeated. Then read the trace (`--trace runs/`): each step lists what the engine was offered (`offered`). The outcome: `DONE_VERIFIED` = pass; `ABSENT_SEEN` = the app showed a success-only text, so it accepted the attack (record field `absentSeen`); `SERVER_ERROR` = a page answered HTTP 5xx (record field `httpStatus`): an app bug, load the URL yourself to read the error; `MAX_STEPS`/`MODEL_BLOCKED`/`LOOP` = the run did not get there; a wrong final page with the success text visible = the app broke a rule.
 
-- **Never edit a spec to make it pass.** A red refusal case is the finding.
-- For each app bug: the rule (file:line), the spec name, what happened. Suggest the lowest-level test that would catch it.
+- **Never edit a spec to make it pass.** A red refusal or attack case is the finding.
+- For each app bug: the rule (file:line), the spec name, what happened (outcome, `absentSeen`, final URL). Suggest the lowest-level test that would catch it: a unit test on the domain rule, or an API test on the route.
+- An attack that got lost (`MAX_STEPS`, `MODEL_BLOCKED`, `NO_SPEC_VALUE`) has no verdict. Say so; do not count it as a pass or as a bug.
+- Report the happy paths first, then the boundary, refusal and attack results.
+- List the attacks you did not run because of the limits above, with the layer that should test them.
 - For a flow that must stay green, emit a Playwright spec from a passing run: `--emit e2e/generated/`.

@@ -428,6 +428,16 @@ const SEEN_RECORDER = `(() => {
     .observe(document, { childList: true, subtree: true, characterData: true });
 })();`;
 
+// `expectAbsent` (attack cases): text a user must NOT see -- the success state an attack must never
+// reach (an order confirmation, a refund line). Returns the first such text on the page, or null.
+async function absentSeen(page, flow) {
+  if (!flow.expectAbsent?.length) return null;
+  try {
+    const seen = norm(await page.evaluate(`(${SEEN_TEXT})()`));
+    return flow.expectAbsent.find((x) => seen.includes(norm(x))) ?? null;
+  } catch { return null; }
+}
+
 // v0.3: the same checks as checkGoal, one record per assertion, for the "why did it fail" report.
 async function explainGoal(page, flow) {
   const outl = [];
@@ -440,6 +450,7 @@ async function explainGoal(page, flow) {
       const past = norm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
       for (const x of flow.expectSeen) outl.push({ kind: "expectSeen", value: x, held: seen.includes(norm(x)) || past.includes(norm(x)) });
     }
+    for (const x of flow.expectAbsent || []) outl.push({ kind: "expectAbsent", value: x, held: !seen.includes(norm(x)) });
     if (flow.expectState?.length) {
       const snap = await page.evaluate(`(${SNAPSHOT})()`);
       for (const w of flow.expectState) outl.push({ kind: "expectState", value: w, held: stateOk(snap, [w]) });
@@ -452,6 +463,7 @@ async function checkGoal(page, flow, snap) {
   try {
     const urlOk = flow.expectUrl ? new RegExp(flow.expectUrl).test(page.url()) : true;
     if (!urlOk) return false;
+    if (await absentSeen(page, flow)) return false;
     // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: form
     // controls contribute nothing (assert them with expectState), hidden/aria-hidden text not at all.
     const need = [...(flow.expect || []), ...(flow.expectSeen || [])];
@@ -517,6 +529,9 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });
   if (flow.expectSeen?.length) await context.addInitScript(SEEN_RECORDER);
   const page = await context.newPage();
+  // A 5xx answer to a main-frame navigation is never a result: the run stops with SERVER_ERROR.
+  let httpStatus = null;
+  page.on("response", (r) => { try { if (r.status() >= 500 && r.request().isNavigationRequest() && r.frame() === page.mainFrame()) httpStatus = r.status(); } catch {} });
   const videoAt = video ? Math.round(performance.now() - t0) : null;
   const steps = [], history = [];
   let outcome = "UNKNOWN", error = null, doneRejects = 0, blocked = 0;
@@ -540,7 +555,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   };
   const echoed = () => [...weakTyped];
   const isOwn = (text) => before.has(norm(text).toLowerCase());
-  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null;
+  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null, absentHit = null;
   // v0.3 SIDE-EFFECT GUARD: an action the engine picks below this confidence is not executed; it
   // counts as BLOCKED (measured: a refusal test paid at 0.22 once the browser blocked the form).
   const minConfidence = flow.minConfidence ?? minConfArg ?? MIN_CONFIDENCE;
@@ -608,7 +623,12 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         snap.title = fix(snap.title);
         for (const a of snap.actions) { a.label = fix(a.label); if (a.optionLabel) a.optionLabel = fix(a.optionLabel); }
       }
-      if ((i > 0 || routeRec?.hops?.length) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
+      // ATTACK CASES: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
+      // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
+      if (httpStatus) { outcome = "SERVER_ERROR"; break; }
+      if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }
+      // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
+      if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
 
       // FIX (v1, TicketBay D2): a field whose label contains no spec key (a rename: "Email" ->
       // "E-mail") used to be invisible to the test. Jev now picks WHICH spec key belongs in it --
@@ -813,7 +833,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   } catch (e) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; }
 
   const tLoopEnd = performance.now() - t0;
-  const passed = await checkGoal(page, flow);
+  if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
+  const passed = outcome !== "SERVER_ERROR" && await checkGoal(page, flow);
+  // A success marker that appeared after the last step is still a finding, not "got lost".
+  if (!absentHit && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
   // v0.3: say WHY. Per-assertion results always; the rest only when the run failed.
@@ -826,7 +849,8 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   const videoFile = video ? await page.video()?.path() : null;
   await context.close();
   if (!shared) await browser.close();
-  const rec = { flow: flow.name, base, engine, budget, outcome, passed, finalUrl, error, steps,
+  const rec = { flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}), base, engine, budget, outcome, passed, finalUrl, error,
+    ...(absentHit ? { absentSeen: absentHit } : {}), ...(httpStatus ? { httpStatus } : {}), steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),
@@ -852,5 +876,5 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   return rec;
 }
 
-export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, explainGoal, ARIA, LETTER_CEILING,
+export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, absentSeen, explainGoal, ARIA, LETTER_CEILING,
   neverMatcher, pageSig, MIN_CONFIDENCE, LOOP_LIMIT };

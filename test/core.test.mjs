@@ -263,6 +263,57 @@ test("redact text cut: whole tokens, separator-flexible, and never for texts und
   assert.equal(cut("Copy security code 737", ["737"]), "Copy security code 737");   // under 4: element-only, documented
 });
 
+import { runOnce } from "../src/loop.mjs";
+
+test("attack cases: a load attack passes on the start page with no engine call; a leak stops with ABSENT_SEEN", async () => {
+  // engine "local" with no local server: any decision would end the run with ERROR
+  const flow = { name: "a", kind: "attack", start: "/attack-order.html?id=9", control: "/attack-order.html?id=3",
+    goal: "Open order 9.", expect: ["Nothing here"], expectAbsent: ["Total paid"], maxSteps: 3 };
+  const ok = await runOnce({ flow, engine: "local", browser, base });
+  assert.equal(ok.outcome, "DONE_VERIFIED");
+  assert.equal(ok.passed, true);
+  assert.equal(ok.steps.length, 0);
+  assert.equal(ok.kind, "attack");
+  const leak = await runOnce({ flow: { ...flow, start: "/attack-order.html?id=9&leak=1" }, engine: "local", browser, base });
+  assert.equal(leak.outcome, "ABSENT_SEEN");
+  assert.equal(leak.passed, false);
+  assert.equal(leak.absentSeen, "Total paid");
+});
+
+test("CLI check: control replaces the start page in the WEAK_ASSERTION check; expectAbsent on the start page is rejected", async () => {
+  const spec = "test/.attack.spec.mjs";
+  fs.writeFileSync(spec, `export default [
+    { name: "load-attack", start: "/attack-order.html?id=9", control: "/attack-order.html?id=3", goal: "Open order 9",
+      expect: ["Nothing here"], expectAbsent: ["Total paid"] },
+    { name: "vacuous", start: "/attack-order.html?id=9", control: "/attack-order.html?id=3", goal: "Open order 9", expect: ["Order"] },
+    { name: "absent-on-load", start: "/attack-order.html?id=3", goal: "Cancel the order", expect: ["Cancelled"], expectAbsent: ["Total paid"] },
+    { name: "code-attack", start: "/attack-code.html", goal: "Apply the code", expect: ["This code has expired."], expectAbsent: ["SUMMER25 25%"] }];`);
+  let out = "";
+  try { out = (await promisify(execFile)("node", ["bin/quicke2e.mjs", "check", spec, "--base", base])).stdout; }
+  catch (e) { out = e.stdout; }
+  fs.rmSync(spec);
+  assert.match(out, /ok\s+load-attack/);
+  assert.match(out, /WEAK_ASSERTION\s+vacuous: .*control page/);
+  assert.match(out, /ABSENT_ON_START absent-on-load: "Total paid"/);
+  assert.match(out, /ok\s+code-attack/);
+});
+
+test("codegen: expectAbsent becomes a not.toContainText on the user-visible text", () => {
+  const flow = { name: "t", start: "/attack-code.html", expect: ["This code has expired."], expectAbsent: ["SUMMER25 25%"] };
+  const { code, sidecar } = generate({ passed: true, outcome: "DONE_VERIFIED", engine: "jev", base, wallMs: 1, steps: [] }, flow);
+  assert.match(code, /not\.toContainText\("SUMMER25 25%", \{ useInnerText: true \}\)/);
+  assert.deepEqual(sidecar.expectAbsent, ["SUMMER25 25%"]);
+});
+
+test("a 5xx answer to a navigation stops the run with SERVER_ERROR and fails it", async () => {
+  const rec = await runOnce({ flow: { name: "s", kind: "attack", start: "/_500", control: "/login.html", goal: "Open the page",
+    expect: ["Internal Server Error"] }, engine: "local", browser, base });
+  assert.equal(rec.outcome, "SERVER_ERROR");
+  assert.equal(rec.httpStatus, 500);
+  assert.equal(rec.passed, false);
+  assert.equal(rec.steps.length, 0);
+});
+
 // ---- v0.3 ----
 import { neverMatcher, pageSig } from "../src/loop.mjs";
 

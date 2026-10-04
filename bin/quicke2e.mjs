@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromium, runOnce, SNAPSHOT, settle, checkGoal } from "../src/loop.mjs";
+import { chromium, runOnce, SNAPSHOT, settle, checkGoal, absentSeen } from "../src/loop.mjs";
 import { discover } from "../src/discover.mjs";
 import { parseRedactArg } from "../src/redact.mjs";
 
@@ -133,15 +133,18 @@ async function preflightEngine(engine) {
 }
 
 // A spec whose assertion already holds on the start page proves nothing (README finding #4).
+// With `control`, loading the start URL IS the attack (another user's order), so the check loads the
+// control page instead: a page where the app says yes. There the assertion must be false.
 async function weak(flow, base, browser) {
+  const at = flow.control || flow.start || "/";
   const ctx = await browser.newContext({ ...(flow.storageState ? { storageState: flow.storageState } : {}) });
   if (flow.expectSeen?.length) await ctx.addInitScript("window.__jevSeen = [];");
   const page = await ctx.newPage();
   try {
-    await page.goto(base.replace(/\/$/, "") + (flow.start || "/"), { waitUntil: "domcontentloaded" });
+    await page.goto(base.replace(/\/$/, "") + at, { waitUntil: "domcontentloaded" });
     await settle(page);
     const snap = await page.evaluate(`(${SNAPSHOT})()`);
-    return await checkGoal(page, flow, snap);
+    return { at, weak: await checkGoal(page, flow, snap), absent: flow.control ? null : await absentSeen(page, flow) };
   } finally { await ctx.close(); }
 }
 
@@ -198,17 +201,20 @@ for (const flow of flows) {
   if (weakKeys.length) out(`note: ${flow.name}: ${weakKeys.join(", ")} ${weakKeys.length > 1 ? "are" : "is a"} weak secret${weakKeys.length > 1 ? "s" : ""}`
     + ` (short or a common word). It is kept out of the goal, but the page may echo it to the engine.`);
   // An app that is not running is the most common first failure: say so in one line, not a stack trace.
-  let isWeak;
-  try { isWeak = await weak(flow, fbase, browser); }
+  let w;
+  try { w = await weak(flow, fbase, browser); }
   catch (e) {
-    const msg = `${fbase.replace(/\/$/, "")}${flow.start || "/"} (${stripAnsi(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`;
+    const msg = `${fbase.replace(/\/$/, "")}${flow.control || flow.start || "/"} (${stripAnsi(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`;
     out(`UNREACHABLE     ${flow.name}: ${msg}`);
     all.push(skipped(flow, "UNREACHABLE", msg)); failed++; continue;
   }
-  if (isWeak) {
-    out(`WEAK_ASSERTION  ${flow.name}: the assertion is already true on ${flow.start || "/"} before any work.`);
+  if (w.weak || w.absent) {
+    const msg = w.absent ? `"${w.absent}" is already visible on ${w.at}. expectAbsent must name a state only success reaches.`
+      : flow.control ? `the assertion is also true on the control page ${w.at}, so it cannot tell a refusal from a success.`
+      : `the assertion is already true on ${w.at} before any work.`;
+    out(`${w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION "} ${flow.name}: ${msg}`);
     if (cmd === "check" || !flag("--allow-weak")) {
-      all.push(skipped(flow, "WEAK_ASSERTION", `the assertion already holds on ${flow.start || "/"}`)); failed++; continue;
+      all.push(skipped(flow, w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION", msg)); failed++; continue;
     }
   } else if (cmd === "check") { out(`ok              ${flow.name}`); all.push({ ...skipped(flow, "OK", null), passed: true }); continue; }
   for (let k = 0; k < runs; k++) {
@@ -221,6 +227,7 @@ for (const flow of flows) {
     if (!rec.passed) failed++;
     out(`${rec.passed ? "PASS" : "FAIL"}  ${flow.name.padEnd(28)} ${String(rec.steps.length).padStart(2)} steps  `
       + `${(rec.wallMs / 1000).toFixed(1).padStart(5)}s  $${rec.cost.toFixed(5)}  ${rec.outcome}`
+      + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (rec.httpStatus ? `  HTTP ${rec.httpStatus}` : "") + (flow.kind ? `  (${flow.kind})` : "")
       + (rec.route?.hops?.length ? `  via map -> ${rec.route.pattern}` : "") + (rec.error ? `  ${rec.error}` : ""));
     if (!rec.passed) for (const l of why(rec)) out(`      ${l}`);
     if (rec.passed && opt("--emit")) {
