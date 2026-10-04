@@ -166,11 +166,13 @@ new paid order, WELCOME10 applied, total €109.39). TicketBay in its dark theme
 | Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 20.89 s (18.4–37.3) | 13–15 tool calls | $0.0888 |
 
 Median decision time: 94 ms on Shisa DE-1 (local, no network), 327 ms on hosted Jev. TicketBay here is
-the benchmark commit with one checkout fix: the discount-code form no longer reloads the page and wipes
-the typed details (`e40d86c` on TicketBay `main`). Before that fix, QuickE2E typed the email and name a
-second time after applying the code.
+the [`bench/2026-10`](https://github.com/dmoka/ticket-bay/tree/bench/2026-10) branch: the benchmark
+commit `7bc02b6` plus one checkout fix (the discount-code form no longer reloads the page and wipes the
+typed details; the same fix is `e40d86c` on TicketBay `main`). Before that fix, QuickE2E typed the email
+and name a second time after applying the code.
 
-Reproduce (needs that TicketBay running on :3200, `APP_DIR` and `DATABASE_URL` for `reset.sh`):
+Reproduce (TicketBay `bench/2026-10` running on :3200 as a production build; `APP_DIR` and
+`DATABASE_URL` set for `examples/ticketbay/reset.sh`):
 
 ```bash
 node bench/demo-capture.mjs --arm jev --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
