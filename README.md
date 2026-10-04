@@ -23,6 +23,8 @@
   <a href="https://github.com/dmoka/quicke2e/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dmoka/quicke2e/ci.yml?branch=main&label=ci"></a>
 </p>
 
+<p align="center"><sub>For AI agents: <a href="AGENTS.md"><code>AGENTS.md</code></a> (spec rules, exit codes, the <code>--json</code> record) · <a href="llms.txt"><code>llms.txt</code></a> · <a href="skill/quicke2e/SKILL.md">agent skill</a></sub></p>
+
 <p align="center"><sub>Formerly <code>jevtester</code>. Unofficial: not affiliated with TypeSafe, the makers of the Jev model.</sub></p>
 
 <br>
@@ -430,7 +432,7 @@ quicke2e check <spec.mjs> [--base url]
 | `--trace` | run | write a JSON trace per run, with each step's start time and decision time |
 | `--video` | run | save a WebM per run. With `--trace`, each step in the trace also gets the box of the element it acted on. The video shows typed values |
 | `--allow-weak` | run | run a spec that failed the `WEAK_ASSERTION` check |
-| `--json` | run | print all run records as JSON |
+| `--json` | run | print all run records as one JSON array on the last line of stdout (fields: [`AGENTS.md`](AGENTS.md#run-and-read-the-result)) |
 | `--headed` / `--headless` | all | force the browser mode |
 
 </details>

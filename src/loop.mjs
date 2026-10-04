@@ -1,5 +1,5 @@
-// Round 6: 100% decision-model loop. No LLM anywhere.
-//   decisions  -> local Laya (or Jev, for a controlled comparison)
+// The run loop. A decision model picks each step; nothing in the loop generates text.
+//   decisions  -> the engine: jev (hosted, OpenRouter), vercel (Jev via the Vercel AI Gateway) or local
 //   text input -> from the test spec
 //   "am I done?" -> deterministic assertion
 import { chromium } from "playwright";
@@ -14,7 +14,6 @@ const __dir = path.dirname(fileURLToPath(import.meta.url));
 const SEEN_TEXT = fs.readFileSync(path.join(__dir, "seen-text.js"), "utf8").replace(/^\/\/.*\n/gm, "").trim();
 const SNAPSHOT = fs.readFileSync(path.join(__dir, "snapshot.js"), "utf8").replaceAll("__SECRET_SRC__", SECRET_SRC.replace(/\\/g, "\\\\"));
 const KEY = process.env.OPENROUTER_API_KEY;
-const LAYA_URL = process.env.LAYA_URL || "http://127.0.0.1:8811";
 const LOCAL_URL = process.env.LOCAL_URL || "http://127.0.0.1:8822";
 // FIX (2026-09-21): was hardcoded to the reference app. A client could not point this at their own app
 // without editing the source. Resolution order: flow.base -> runOnce({base}) -> $APP_BASE -> default.
@@ -262,10 +261,10 @@ export async function choose({ state, criteria, goal, rules = RULES, engine = "j
     return { choice: r.answers.action.choice, confidence: r.answers.action.confidence,
       ms: performance.now() - t0, tokens: r.usage?.input_tokens || 0, cost: r.usage?.cost || 0, truncated: false };
   }
-  // "local": a small instruct model on MLX, constrained to the offered option ids
-  // by construction — one prefill, then read only the option letters' logits.
-  // Same wire shape as laya, so both share the response handling below.
-  const r = await post(engine === "local" ? LOCAL_URL : LAYA_URL, { state, questions }, false);
+  // "local": an open decision model served by local-engine/server.py, constrained to the offered
+  // option labels by construction -- one prefill, then read only the labels' logits.
+  if (engine !== "local") throw new Error(`unknown engine "${engine}": use jev, vercel or local`);
+  const r = await post(LOCAL_URL, { state, questions }, false);
   if (r.error) throw new Error(engine + ": " + r.error);
   return { choice: r.answers.action.choice, confidence: r.answers.action.confidence,
     ms: performance.now() - t0, inferMs: r.timing.infer_ms, queuedMs: r.timing.queued_ms,

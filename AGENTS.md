@@ -1,0 +1,98 @@
+# AGENTS.md
+
+Instructions for AI coding agents. Part 1: use QuickE2E to test a web app. Part 2: change this repo.
+
+## Part 1: test a web app with QuickE2E
+
+### Setup
+
+```bash
+npm install -D quicke2e && npx playwright install chromium
+export OPENROUTER_API_KEY=...   # engine "jev" (default). Engine "vercel" reads AI_GATEWAY_API_KEY.
+```
+
+The engine `local` needs no key: start `local-engine/server.py` (Apple Silicon only) and set `LOCAL_URL`
+if it does not listen on `http://127.0.0.1:8822`.
+
+### Write a spec
+
+A spec file exports an array of flows. One flow = one goal and its assertions.
+
+```js
+// quicke2e.spec.mjs
+export default [{
+  name: "book-with-code",                                   // unique; used by --only and in file names
+  start: "/events/midnight-arcade-neon-tour",               // start path
+  inputs: { name: "Alex Fan", email: "fan@example.com", "discount code": "WELCOME10" },
+  goal: "Book tickets: continue to checkout, apply the discount code WELCOME10, enter the email and name, and pay.",
+  expectUrl: "/orders/\\d+\\?placed=1",                     // regex on the final URL
+  expect: ["Payment confirmed", "Total paid €109.39"],      // text a user sees on the final page
+}];
+```
+
+Rules:
+
+1. **Every value the run types goes in `inputs`**, keyed by words from the field's label. The engine
+   never writes text. When no key matches a label ("E-mail" for key `email`), the engine picks which
+   key belongs in that field. A value the spec does not have ends the run (outcome `NO_SPEC_VALUE`).
+2. **Name every action the goal needs.** Write "apply the discount code WELCOME10", not "with the code
+   WELCOME10": with the second wording the engine typed the code and never clicked Apply.
+3. **Assert the end state, not the start state.** `check` rejects a spec whose assertions already hold
+   on the start page (`WEAK_ASSERTION`).
+4. **Use `expectSeen` for text that disappears** (toasts) and `expectState` for control state
+   (checked, selected, disabled). `expect` reads only text a user sees, not form control values.
+5. **Put content the engine must never see in `redact`** (CSS selectors or `/regex/` patterns).
+   Secret-looking `inputs` values are scrubbed from engine requests automatically.
+
+### Run and read the result
+
+```bash
+npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000     # validate specs, no model call
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --json --headless
+```
+
+- **Exit code:** `0` = every run passed; `1` = a run failed or a spec failed the `WEAK_ASSERTION`
+  check; `2` = usage error.
+- **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`.
+- **Machine output:** with `--json`, the **last line of stdout** is a JSON array with one record per run.
+
+| record field | type | meaning |
+|---|---|---|
+| `flow` | string | the spec's `name` |
+| `passed` | boolean | the final assertion check: the result to trust |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED`, `MODEL_BLOCKED`, `NO_SPEC_VALUE`, `MAX_STEPS`, `ERROR` |
+| `error` | string or null | the error message when `outcome` is `ERROR` |
+| `finalUrl` | string | the URL when the run ended |
+| `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |
+| `wallMs` | number | total run time in ms |
+| `cost` | number | engine cost in USD (`0` on `local`) |
+| `engine` | string | `jev`, `vercel` or `local` |
+
+On a failure, read `outcome`, then the last entries of `steps` (the page and the elements the engine
+chose), then `finalUrl`. Add `--trace <dir>` for a full JSON trace per run and `--video <dir>` for a
+WebM recording.
+
+### Turn a passing run into a CI test
+
+```bash
+npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000 --emit e2e/generated/
+```
+
+`--emit` writes a plain Playwright spec per passing run. It replays without a model call.
+
+### Let the agent invent the cases
+
+`skill/quicke2e/SKILL.md` is a skill for Claude Code and compatible agents: it maps the app
+(`quicke2e discover`), reads the source for business rules, writes specs, runs them, and reports
+findings.
+
+## Part 2: change this repo
+
+- `src/loop.mjs`: the run loop (snapshot → offered actions → engine decision → act → assertion check).
+  `src/discover.mjs`: the crawler. `src/secret.mjs`, `src/redact.mjs`: what the engine may see.
+  `codegen/codegen.mjs`: the Playwright export. `bin/quicke2e.mjs`: the CLI. `local-engine/`: the local engine.
+- Tests: `npm test` (model-free, no key, no cost) and `python3 -m unittest local-engine/test_server.py`.
+  CI also runs `node fixtures/run.mjs --checkout . --engine jev --n 1` when `OPENROUTER_API_KEY` is set.
+- A behaviour change needs a fixture page in `fixtures/pages/` and a flow in `fixtures/flows.mjs` that
+  fails before the change and passes after it.
+- Never send a secret spec value to the engine: route new page text through the scrub in `src/secret.mjs`.

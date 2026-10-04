@@ -1,0 +1,15 @@
+# QuickE2E
+
+> Plain-English end-to-end tests for web apps. A small decision model picks each click from a list of offered actions, the spec supplies every typed value, and code decides pass or fail. A passing run exports a Playwright spec. npm package and CLI: `quicke2e`. MIT.
+
+## Docs
+
+- [README](https://github.com/dmoka/quicke2e/blob/main/README.md): what it is, quick start, how it works, benchmarks, engines, limits
+- [AGENTS.md](https://github.com/dmoka/quicke2e/blob/main/AGENTS.md): for AI agents: spec rules, CLI exit codes, the `--json` run record, how to read a failure
+- [Agent skill](https://github.com/dmoka/quicke2e/blob/main/skill/quicke2e/SKILL.md): let an agent map an app, invent test cases and run them
+- [Local engine](https://github.com/dmoka/quicke2e/blob/main/local-engine/README.md): run the open decision models (Eikos-4B, Shisa DE-1) on Apple Silicon, $0 per run
+
+## Examples
+
+- [Fixture specs](https://github.com/dmoka/quicke2e/blob/main/examples/fixtures.spec.mjs): three specs against the bundled fixture pages
+- [TicketBay specs](https://github.com/dmoka/quicke2e/blob/main/examples/ticketbay/flows.mjs): booking with a discount code, refunds, checkout
