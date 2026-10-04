@@ -1,56 +1,93 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
-    <img alt="QuickE2E" src="docs/logo-light.png" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img alt="QuickE2E" src="docs/logo.svg" width="420">
   </picture>
 </p>
 
+<p align="center">
+  <b>Plain-English end-to-end tests for web apps.<br>A small decision model picks each click. Code decides pass or fail.</b>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#benchmarks">Benchmarks</a> ·
+  <a href="#engines">Engines</a> ·
+  <a href="#limits">Limits</a>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/quicke2e"><img alt="npm" src="https://img.shields.io/npm/v/quicke2e"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="https://github.com/dmoka/quicke2e/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dmoka/quicke2e/ci.yml?branch=main&label=ci"></a>
+</p>
+
+<p align="center"><sub>Formerly <code>jevtester</code>. Unofficial: not affiliated with TypeSafe, the makers of the Jev model.</sub></p>
+
+<br>
+<br>
+
 ![QuickE2E buys two tickets with a discount code on TicketBay, from the home page, in 4.8 seconds](docs/demo.gif)
 
-*Real time, not sped up. Task: from the home page, buy 2 tickets with the discount code WELCOME10.
-Median of 5 runs each, all passed, same database check: **QuickE2E 4.79 s** (hosted Jev) and **3.23 s**
-(local Shisa DE-1, $0), **Claude Code + Playwright MCP (Sonnet 5) 20.89 s**. Cost per run $0.00030
-against $0.0888. Measured 2026-09-30 on an M2 Max; see [the launch-video task](#the-launch-video-task).*
+*Recorded at 1× speed. Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
 
-> Formerly `jevtester`. **Unofficial:** not affiliated with TypeSafe, the makers of the Jev model that
-> the default engine uses.
+| launch task, 5 runs per arm | median wall time | pass | cost / run |
+|---|---|---|---|
+| **QuickE2E, `local` engine, Shisa DE-1** | **3.23 s** | 5/5 | **$0** |
+| **QuickE2E, hosted Jev** | **4.79 s** | 5/5 | $0.00030 |
+| Claude Code + Playwright MCP, Sonnet 5 | 20.89 s (18.4–37.3) | 5/5 | $0.0888 |
 
-**An exploratory browser tester. It maps your app, a small decision model picks the clicks, your spec
-supplies every typed value, and code decides pass or fail. A passing run becomes a plain Playwright
-spec.**
+Hosted Jev against Claude Code: **4.3× faster and 296× cheaper.** Same start page, same goal, one SQL
+check for every run. Measured 2026-09-29 (Jev, Claude Code) and 2026-09-30 (Shisa DE-1) on an M2 Max.
+Raw runs: [`bench/results/launch-task.json`](bench/results/launch-task.json). [Method and other tasks](#benchmarks).
+
+## What it is
+
+QuickE2E is an exploratory end-to-end browser tester. A spec holds a goal in plain English, the values
+to type, and an assertion. Each step, QuickE2E turns the page into a list of legal moves, a decision
+model returns the key of one move, and code checks the assertion on every page snapshot.
+
+- **No selectors in the spec.** A spec holds a goal, inputs and assertions.
+- **The engine writes no text.** It returns one of the offered keys. Every typed value comes from the spec's `inputs`.
+- **Code decides pass or fail.** It checks the URL, the text a user sees, and control state.
+- **`--emit` turns a passing run into a Playwright spec.** The spec replays in CI with no model call.
+- **Secret-looking spec values are scrubbed** from every engine request, and from traces, maps and emitted specs on disk.
+- **The `local` engine costs $0 per run** and makes no network call after the first model download. It needs Apple Silicon.
 
 ```js
-// quicke2e.spec.mjs
+// quicke2e.spec.mjs (the book-with-code spec from examples/ticketbay/flows.mjs)
 export default [{
   name: "book-with-code",
   start: "/events/midnight-arcade-neon-tour",
+  maxSteps: 16,
   inputs: { name: "Alex Fan", email: "fan@example.com", "discount code": "WELCOME10" },
-  goal: "Book tickets: continue to checkout, apply the discount code WELCOME10, enter the email and name, and pay.",
-  expectUrl: "/orders/\\d+\\?placed=1",                  // the assertion
-  expect: ["Payment confirmed", "Total paid €109.39"],    // the assertion
+  goal: "Book tickets for this event: continue to checkout, apply the discount code WELCOME10, "
+    + "enter the email fan@example.com and the name Alex Fan, and pay.",
+  expectUrl: "/orders/\\d+\\?placed=1",                                  // the assertion
+  expect: ["Payment confirmed", "WELCOME10 10%", "Total paid €109.39"],  // the assertion
 }];
 ```
 
+## Quick start
+
+Requires Node 20 or later.
+
+```bash
+npm install -D quicke2e && npx playwright install chromium
+export OPENROUTER_API_KEY=...        # the default jev engine calls OpenRouter
+npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000
 ```
+
+On TicketBay, the spec above printed this (hosted Jev, 2026-09-24):
+
+```console
 $ npx quicke2e run quicke2e.spec.mjs --base http://localhost:3200
 PASS  book-with-code                8 steps    4.3s  $0.00032  DONE_VERIFIED
 ```
 
-No selectors. The model never types, and it never decides whether the test passed. With the default
-`jev` engine there is no LLM in the run loop.
-
-**On the same checkout flow, quicke2e was 7.10× faster and 614× cheaper than Claude Code driving
-Playwright MCP (Sonnet 5), and 8.30× faster and 675× cheaper than it on Opus 5.5.** Details below.
-
-## Quick start
-
-```bash
-npm install -D quicke2e && npx playwright install chromium
-export OPENROUTER_API_KEY=...                    # the Jev engine, via OpenRouter
-npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000
-```
-
-No app handy? Clone the repo and run the examples against the bundled fixture pages:
+No app at hand? Clone the repo and run three example flows (`login`, `choose-a-plan`,
+`weekly-digest-toast`) against the bundled fixture pages:
 
 ```bash
 git clone https://github.com/dmoka/quicke2e && cd quicke2e && npm ci && npx playwright install chromium
@@ -58,111 +95,123 @@ node fixtures/serve.mjs 8899 &
 npx quicke2e run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
 ```
 
-On your own app:
+### On your own app
 
 ```bash
-npx quicke2e discover http://localhost:3000 -o quicke2e.map.json      # map the app (once)
+npx quicke2e discover http://localhost:3000 -o quicke2e.map.json      # map the app (once, no model)
 npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000    # reject weak assertions
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.map.json
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --video runs/        # record the browser
 ```
 
-`--video <dir>` saves a WebM of each run, and with `--trace <dir>` every step's start time, decision time
-and the box of the element it acted on. The video shows what the browser showed, typed values included.
+The browser is visible when you run a command in a terminal. It runs headless when `CI` is set, when
+the output is piped, or on Linux with no `DISPLAY` or `WAYLAND_DISPLAY`. `--headed` and `--headless`
+force either mode.
 
-The browser is visible when you run a command yourself in a terminal, so you can watch what the model
-does. It runs headless in CI (`CI` set), without a display, or when the output is piped. `--headed` and
-`--headless` force either.
-
-`npm test` runs the model-free test suite (no key, no cost).
+`run` and `check` exit with code 1 when any spec fails or fails the `WEAK_ASSERTION` check.
 
 ## How it works
 
-Three parts, and only one of them is a model.
+QuickE2E has three parts. Only the second part calls a model.
 
-1. **Discover (once).** `quicke2e discover` crawls the app with plain Playwright and writes a map:
-   pages (`/events/:id`), the links and buttons between them, and every form with its fields, options,
-   and where its submit leads. On `localhost` it submits forms (a full crawl), so point it at a
-   throwaway database; `--reset "<cmd>"` restores your seed data first. On any other host it refuses
-   unless you pass `--safe` or `--i-own-this-data`.
-2. **Decide.** Each step, the page becomes a short list of legal moves (`TYPE_TEXT 3 Email [textbox]`,
-   `CLICK 7 Pay [button]`). Jev returns one of **your** keys, with a confidence taken from its
-   probability distribution over the offered keys. It cannot invent an action, a selector, or a value;
-   an answer that is not an offered key is treated as BLOCKED. Nothing is ever dropped: when a page
-   has more candidates than one decision can hold, they are split into heats that Jev decides in
-   parallel (each with a "none of these" option), and the final is between the heat winners. With a
-   map, Jev first picks the page the goal needs, and code walks there by the map's links.
-3. **Verify.** Code decides success, checked on every snapshot:
-   - `expectUrl`: a URL regex.
-   - `expect`: text a sighted user sees on the page. Hidden, transparent, clipped and off-page text does
-     not count, and neither do form controls: a value the test typed or chose itself is not a result.
-   - `expectState: [{ role, name, value | checked | selected }]`: a control's state (a chosen option,
-     a checked box, a field's value).
-   - `expectSeen`: text that appeared at any moment since the page loaded, such as a toast.
+### 1. Discover (once)
 
-**Text comes from the spec.** Spec keys match field labels (`email` → "Email"); one key fills one field
-per page. When a label contains no key (a rename: "E-mail", "Ticket holder"), Jev picks which of your
-unused keys belongs there — a typed choice over your keys, so the value still comes only from the spec.
+`quicke2e discover` crawls the app with plain Playwright and writes a map: pages (`/events/:id`), the
+links and buttons between them, and every form with its fields, options, and the page its submit leads
+to.
 
-**Your secrets stay out.** A spec key that looks secret (`password`, `api key`, `card number`, `token`,
-…) never has its value sent to the engine. It is scrubbed from the whole request, including where the
-page echoes it (re-cased, truncated, re-spaced, grouped, URL-encoded, or as a masked card "ending 6789"),
-and from traces, maps and emitted specs on disk. A *weak* value (`admin`, `letmein1`) looks like an
-ordinary word, so it is handled by history instead of shape: a page string that appears only after the
-value was typed is an echo and is scrubbed; a string the page had before, or a label that is exactly
-that word (an "Admin" link), is the page's own.
+On `localhost`, `127.0.0.1`, `[::1]` and `0.0.0.0`, discover submits forms (a full crawl), so point it
+at a throwaway database. `--reset "<cmd>"` restores your seed data first. On any other host, a full
+crawl stops with an error unless you pass `--i-own-this-data`. Pass `--safe` for a crawl that submits
+no form. Neither mode clicks a log-out control.
 
-**Page content is what the engine decides on**, as with any browser agent. Content that must never leave
-the page is declared in the spec:
+### 2. Decide
+
+Each step, the page becomes a short list of legal moves (`TYPE_TEXT 3 Email [textbox]`,
+`CLICK 7 Pay [button]`). The engine returns one of the offered keys, with a confidence. It cannot
+invent an action, a selector or a value. QuickE2E treats an answer that is not an offered key as
+BLOCKED and does not act on it.
+
+When a page has more candidates than one decision can hold, QuickE2E splits them into heats. The
+engine decides the heats in parallel, each with a "none of these" option, and then decides a final
+between the heat winners. No candidate is dropped.
+
+With a map (`--map`), the engine first picks the page the goal needs. If the start page is in the map
+and the map has a link route, code clicks along that route.
+
+### 3. Verify
+
+Code decides success. It checks the assertions on every snapshot:
+
+| assertion | passes when |
+|---|---|
+| `expectUrl` | the URL matches this regex |
+| `expect` | a sighted user sees this text on the page. Hidden, `aria-hidden`, transparent, clipped and off-page text does not count. The values of form controls do not count, because the test typed or chose them |
+| `expectState: [{ role, name, value \| checked \| selected }]` | a control has this state (a chosen option, a checked box, a field's value) |
+| `expectSeen` | this text appeared at any moment since the page loaded, such as a toast |
+
+A run passes when the assertions hold at the end of the run.
+
+### Text comes from the spec
+
+Spec keys match field labels by substring (`email` → "Email"). One key fills one field per page. When
+a label contains no key (a renamed label such as "E-mail" or "Ticket holder"), the engine picks which
+of your unused keys belongs there. That pick is a choice over your keys, so the value still comes only
+from the spec. QuickE2E never maps a key into a number, date or file field this way.
+
+### `WEAK_ASSERTION`
+
+`run` and `check` first load the start page. If the assertion already holds before any step, QuickE2E
+rejects the spec with `WEAK_ASSERTION`, because an assertion that is true on page load passes without
+any work.
+
+### Codegen
+
+`--emit <dir>` turns a passing run into `<dir>/<name>.spec.ts`: a Playwright spec with accessible-name
+locators (`getByRole`) and the same assertions. Each input is read from an environment variable named
+`<FLOW>_<KEY>` (for example `CHECKOUT_PLAIN_EMAIL`). A non-secret input falls back to the spec value. A
+secret input has no fallback, so the credential is never written into the file.
+
+## Secrets and redaction
+
+**Secret inputs.** A spec key is secret when its name matches a pattern such as `password`,
+`api key`, `card`, `token`, `otp` or `iban`. QuickE2E scrubs a strong secret value (10 or more
+characters with 2 or more character classes, or a number with 10 or more digits) from every engine
+request, including places where the page echoes it: re-cased, truncated, re-spaced, grouped,
+URL-encoded, or as a masked card "ending 6789". It also scrubs the value from traces, maps and emitted
+specs on disk.
+
+**Weak secret values.** A weak value (`admin`, `letmein1`) looks like an ordinary word, so QuickE2E
+classifies page strings by history:
+- A page string that appears only after the value was typed is an echo. QuickE2E scrubs it.
+- A string the page had before, or a label that is exactly that word (an "Admin" link), is the page's own text. QuickE2E keeps it, and it reaches the engine.
+
+`run` prints a note for every weak secret in a spec.
+
+**Page content.** The engine decides on page content: labels, the page title, and form values. Declare
+content that must never leave the page in the spec:
 
 ```js
 redact: [".backup-code", "#saved-cards", /recovery code \S+/i]   // CSS selectors and text patterns
 ```
 
-A selector covers its elements anywhere (shadow roots and same-origin iframes included) and every
-label, name or option derived from their text; a pattern covers raw text, such as the page title. The
-same list works for `discover --redact`, so the map on disk stays clean too. A matched text shorter
-than 4 characters (a 3-digit CVC) hides its own element but is not searched for in other text, because
-cutting every "737" on a page would mangle numbers; declare such a copy with a pattern.
+- A selector covers its elements in the document, open shadow roots and same-origin iframes, and every label, name or option derived from their text.
+- A pattern covers raw text, such as the page title and URLs.
+- `discover --redact` takes the same list, so the map on disk stays clean.
+- A matched text with fewer than 4 letters or digits (a 3-digit CVC) hides its own element, but QuickE2E does not search for it in other text, because cutting every "737" on a page would corrupt prices and numbers. Declare such a copy with a pattern.
 
-**`WEAK_ASSERTION`.** `run` and `check` first load the start page. If the assertion already holds before
-any work, the spec is rejected. An assertion that is true on page load proves nothing.
+## Benchmarks
 
-**Codegen.** `--emit` turns a passing run into a Playwright spec with accessible-name locators and the
-same assertions — the deterministic replay you can put in CI. Secret inputs are read from environment
-variables only.
+Machine: an M2 Max. Hosted engine: `jev` (`typesafe/jev-1.13` via OpenRouter). Claude's cost is the
+`total_cost_usd` that `claude -p --output-format json` reports (API-equivalent). Wall time is the whole
+command, end to end, including browser or MCP start-up.
 
-## Measured
+### Launch task: buy from the home page (the GIF)
 
-All numbers measured on 2026-09-24 on an M2 Max, engine `jev` (`typesafe/jev-1.13` via OpenRouter)
-unless stated.
-
-**Head to head: TicketBay checkout** (the same start page, the same goal text, a database reset
-before every run, and one SQL check for all arms: a new paid order with the right name, email and
-total). Wall time is the whole command, end to end, including browser or MCP start-up.
-
-| | pass | median wall | cost / run |
-|---|---|---|---|
-| **quicke2e, `jev` engine** | **5/5** | **3.05 s** | **$0.000153** |
-| quicke2e, `local` engine, Shisa DE-1 | 5/5 | **2.04 s** | $0 |
-| quicke2e, `local` engine, Eikos-4B | 5/5 | 4.36 s | $0 |
-| Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 21.67 s | $0.0940 |
-| Claude Code + Playwright MCP, Opus 5.5 | 5/5 | 25.34 s | $0.1033 |
-
-Hosted latency varies: one 5-run `jev` batch landed in a slow period on the hosted engine and took a
-median 11.6 s (still 1.86× faster than Sonnet); the batch re-run right after gave the 3.05 s above. Both
-batches are in the results file. The `local` engine does not have this variance.
-Claude's cost is the `total_cost_usd` that `claude -p --output-format json` reports (API-equivalent).
-Both approaches pass; the difference is time and money. Reproduce: `node bench/headtohead.mjs --arm jev --n 5`
-and `node bench/headtohead.mjs --arm claude --model sonnet --n 5` (needs a running TicketBay); raw runs
-in `bench/results/h2h-final.json`.
-
-### The launch-video task
-
-The GIF at the top. The agent starts on the home page, finds the event in the list, opens it, continues
-to checkout, applies WELCOME10, enters the email and name, and pays. Same database check as above (one
-new paid order, WELCOME10 applied, total €109.39). TicketBay in its dark theme, measured 2026-09-30.
+The agent starts on the home page, finds the event in the list, opens it, continues to checkout,
+applies WELCOME10, enters the email and name, and pays. The check for every run: one new paid order,
+WELCOME10 applied, total €109.39. TicketBay in its dark theme, measured 2026-09-30.
 
 | | pass | median wall | steps | cost / run |
 |---|---|---|---|---|
@@ -170,33 +219,85 @@ new paid order, WELCOME10 applied, total €109.39). TicketBay in its dark theme
 | **QuickE2E, `jev` engine** | **5/5** | **4.79 s** | 7 | $0.00030 |
 | Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 20.89 s (18.4–37.3) | 13–15 tool calls | $0.0888 |
 
-Median decision time: 94 ms on Shisa DE-1 (local, no network), 327 ms on hosted Jev. TicketBay here is
-the [`bench/2026-10`](https://github.com/dmoka/ticket-bay/tree/bench/2026-10) branch: the benchmark
-commit `7bc02b6` plus one checkout fix (the discount-code form no longer reloads the page and wipes the
-typed details; the same fix is `e40d86c` on TicketBay `main`). Before that fix, QuickE2E typed the email
-and name a second time after applying the code.
+Hosted Jev against Sonnet 5: 20.89 / 4.79 = 4.36 (4.3× faster); $0.0888 / $0.00030 = 296 (296×
+cheaper). Median decision time: 94 ms on Shisa DE-1 (local, no network), 327 ms on hosted Jev.
 
-Reproduce (TicketBay `bench/2026-10` running on :3200 as a production build; `APP_DIR` and
-`DATABASE_URL` set for `examples/ticketbay/reset.sh`):
+<details>
+<summary>App version and reproduce</summary>
+
+TicketBay here is the [`bench/2026-10`](https://github.com/dmoka/ticket-bay/tree/bench/2026-10) branch:
+the benchmark commit `7bc02b6` plus one checkout fix. With the fix, the discount-code form no longer
+reloads the page and wipes the typed details. The same fix is `e40d86c` on TicketBay `main`. Before
+that fix, QuickE2E typed the email and name a second time after applying the code.
+
+Run TicketBay `bench/2026-10` on :3200 as a production build, and set `APP_DIR` and `DATABASE_URL` for
+`examples/ticketbay/reset.sh`. Then:
 
 ```bash
 node bench/demo-capture.mjs --arm jev --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
+node bench/demo-capture.mjs --arm jev --engine local --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
 node bench/demo-capture.mjs --arm claude --model sonnet --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
 ```
 
-Each run writes a video and a timeline (steps, timestamps, tokens, cost). Claude Code's browser is
-launched and recorded by the script and reached by the MCP server over CDP, so its video is complete.
+The `--engine local` line needs the local engine server running with `--model shisa-de-1`. Each run
+writes a video and a timeline (steps, timestamps, tokens, cost), and the script prints the median wall
+time and median cost. The script launches and records Claude Code's browser, and the MCP server reaches
+that browser over CDP, so the Claude Code video is complete.
 
-**Eight UI stacks × three tasks.** Vanilla HTML, React + MUI, React + Ant Design, React + Radix/shadcn,
-Vue 3 + Element Plus, Web Components (Shoelace + Lit, shadow DOM), a form inside a same-origin iframe,
-and a legacy jQuery/table page. Tasks: log in; fill a form with a text field, a dropdown and a checkbox;
-open row 57 of a 60-row list.
+</details>
 
-| | pass | median run | cost / run |
+### Plain checkout: start on the event page (2026-09-24)
+
+A shorter task: start on the event page, continue to checkout, enter the email and name, and pay (no
+discount code). Same goal text for every arm, a database reset before every run, and one SQL check: a
+new paid order with the right name, email and total.
+
+| | pass | median wall | mean cost / run |
 |---|---|---|---|
-| quicke2e | **120/120** (n=5 per cell) | 1.8 s | $0.00014 |
+| **QuickE2E, `jev` engine** | **5/5** | **3.05 s** | **$0.000153** |
+| QuickE2E, `local` engine, Shisa DE-1 | 5/5 | **2.04 s** | $0 |
+| QuickE2E, `local` engine, Eikos-4B | 5/5 | 4.36 s | $0 |
+| Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 21.67 s | $0.0940 |
+| Claude Code + Playwright MCP, Opus 5.5 | 5/5 | 25.34 s | $0.1033 |
 
-Reproduce (about 4 minutes, about $0.014):
+Hosted Jev was 7.10× faster and 614× cheaper than Sonnet 5, and 8.30× faster and 675× cheaper than
+Opus 5.5 (median wall time, mean cost). The two `local` rows were measured on 2026-09-28.
+
+Hosted latency varies. One 5-run `jev` batch ran during a slow period on the hosted engine and took a
+median 11.6 s (1.86× faster than Sonnet 5). The batch re-run right after it gave the 3.05 s above. The
+`local` engine sends no request over the network, so this variance does not apply to it.
+
+<details>
+<summary>Reproduce</summary>
+
+Needs a running TicketBay.
+
+```bash
+node bench/headtohead.mjs --arm jev --n 5
+node bench/headtohead.mjs --arm claude --model sonnet --n 5
+```
+
+Raw runs of the `jev` batches (both) and the Claude Code arms: `bench/results/h2h-final.json`.
+
+</details>
+
+### Eight UI stacks × three tasks
+
+Stacks: vanilla HTML, React + MUI, React + Ant Design, React + Radix/shadcn, Vue 3 + Element Plus, Web
+Components (Shoelace + Lit, shadow DOM), a form inside a same-origin iframe, and a legacy jQuery/table
+page. Tasks: log in; fill a form with a text field, a dropdown and a checkbox; open row 57 of a 60-row
+list.
+
+| engine | pass | median run | mean cost / run |
+|---|---|---|---|
+| `jev` | **120/120** (24 cells, n=5 per cell) | 1.8 s | $0.00014 |
+
+Raw runs: `bench/results/6c6a550.jsonl`. The page-representation comparison behind this design
+(in-page DOM snapshot vs Playwright's aria snapshot vs the CDP accessibility tree) is in
+[`docs/bakeoff-2026-09-24.md`](docs/bakeoff-2026-09-24.md).
+
+<details>
+<summary>Reproduce (about 4 minutes, about $0.017)</summary>
 
 ```bash
 bench/stacks/build.sh && node bench/verify-stacks.mjs     # builds the 8 apps; 24/24 scripted checks, no model
@@ -204,13 +305,16 @@ node bench/run-matrix.mjs --approaches A --n 5 --out bench/results/mine.jsonl   
 node bench/report.mjs bench/results/mine.jsonl
 ```
 
-(Ports 5101–5108 must be free. `A` means this checkout's `src/`. The runner skips runs already in its
-output file, so always pass a new `--out`.) The page-representation comparison behind this design —
-in-page DOM snapshot vs Playwright's aria snapshot vs the CDP accessibility tree — is in
-`docs/bakeoff-2026-09-24.md`.
+Ports 5101–5108 must be free. `A` means this checkout's `src/`. The runner skips runs already in its
+output file, so always pass a new `--out`.
 
-**A real app: TicketBay** (the practice app of the *AI Agent Engineer* course: Next.js 16 +
-shadcn/Radix + Postgres, production build, data reset before every run; specs in `examples/ticketbay/`):
+</details>
+
+### Four TicketBay specs
+
+TicketBay is the practice app of the *AI Agent Engineer* course: Next.js 16 + shadcn/Radix + Postgres,
+production build, data reset before every run. Specs are in `examples/ticketbay/`. The `jev` columns
+are from 2026-09-24, the `local` column from 2026-09-28.
 
 | spec | jev | local (Eikos-4B / Shisa DE-1) | steps (jev) | wall (jev) | cost (jev) |
 |---|---|---|---|---|---|
@@ -219,61 +323,236 @@ shadcn/Radix + Postgres, production build, data reset before every run; specs in
 | refund refused after the event started | 5/5 | 5/5 / 5/5 | 1 | 0.9 s | $0.00003 |
 | plain checkout | 5/5 | 5/5 / 5/5 | 4 | 2.5 s | $0.00015 |
 
-The refund spec, run against a copy of TicketBay with the refund-window check removed, fails 5/5: it
-catches the bug (the copy refunded €39.69 after the event started). The Playwright spec emitted from a
-passing checkout run replays 3/3, about 0.8 s each including browser start, with no model.
+- **The refund spec found a planted bug.** It fails 5/5 against a copy of TicketBay with the refund-window check removed. That copy refunded €39.69 after the event started.
+- **The emitted spec replays.** The Playwright spec emitted from a passing checkout run replays 3/3, about 0.8 s each including browser start, with no model.
 
-**Fixture suite** (`fixtures/`: 59 small hand-written pages, n=3). Each page is a defect found in the
-field or an attack from a ten-round security and robustness audit: shadow DOM, iframes, toasts, secret
-echoes (re-cased, truncated, grouped, URL-encoded, weak), declared redaction through shadow roots and
-iframes, hidden-text false passes, a 150-link page, a safe crawl. **jev 59/59; local Eikos-4B
-58/59; local Shisa DE-1 56/59.** Strong spec secrets: 0 leaks.
+### Fixture suite
+
+`fixtures/` holds 59 small hand-written pages, run at n=3. Each page is a defect found in the field or
+an attack from the project's ten-round security and robustness audit: shadow DOM, iframes, toasts,
+secret echoes (re-cased, truncated, grouped, URL-encoded, weak), declared redaction through shadow
+roots and iframes, hidden-text false passes, a 150-link page, a safe crawl.
+
+| engine | pass |
+|---|---|
+| `jev` | **59/59** |
+| `local`, Eikos-4B | 58/59 |
+| `local`, Shisa DE-1 | 56/59 |
+
+Strong spec secrets in the suite: 0 leaks.
 
 ## Engines
 
-| engine | how | notes |
+Select an engine with `--engine`.
+
+| engine | setup | notes |
 |---|---|---|
-| `jev` (default) | `OPENROUTER_API_KEY` | hosted, any OS |
-| `vercel` | `AI_GATEWAY_API_KEY` | the same Jev model through the Vercel AI Gateway (not measured for this release) |
-| `local` | `local-engine/server.py` | **Apple Silicon only**, $0, offline. Open decision models: **Eikos-4B** (default, 4.1 GB, TicketBay 20/20, fixtures 58/59) or **Shisa DE-1** (`--model shisa-de-1`, 17 GB, needs `brew install llama.cpp`; TicketBay 20/20 and **faster than hosted Jev**: a checkout in 2.0 s against 3.05 s). They only pick an option, never write text. See `local-engine/README.md` |
+| `jev` (default) | `OPENROUTER_API_KEY` | Hosted, any OS. |
+| `vercel` | `AI_GATEWAY_API_KEY` | The same Jev model through the Vercel AI Gateway. Not measured for this release. |
+| `local` | `local-engine/server.py` | **Apple Silicon only.** $0 per run. Open decision models that read the logits of the option labels and generate no text. |
 
-## The skill: let a big model invent the cases
+The `local` engine runs one of two open models:
 
-`skill/quicke2e/SKILL.md` is an agent skill (Claude Code and compatible agents). The big model reads the
-map and your source code, lists the business rules (`rule — file:line`), invents happy-path, boundary
-and refusal cases, writes the spec file, runs `check` and `run`, and reports which failures are app
-bugs. The split is deliberate: the big model thinks once, offline; Jev drives cheaply, many times; code
-judges.
+| | **Eikos-4B** (default) | **Shisa DE-1** (`--model shisa-de-1`) | Jev (hosted) |
+|---|---|---|---|
+| what it is | Qwen3.5-4B fine-tuned for decisions | Gemma 4 26B MoE, 3.8B active per token | TypeSafe's hosted model |
+| peak memory | **4.1 GB** | 17.4 GB | none locally |
+| Mac | any Apple Silicon Mac with 8 GB or more | 32 GB, and `brew install llama.cpp` | any OS |
+| TicketBay (4 specs × 5) | 20/20 | 20/20 | 20/20 |
+| plain checkout, end to end | 4.4 s | **2.0 s** | 3.05 s |
+| fixture suite (59 pages, n=3) | 58/59 | 56/59 | 59/59 |
+
+Measured 2026-09-28 on an M2 Max with 64 GB. Shisa DE-1 beats hosted Jev on the plain checkout because
+only 3.8B parameters are active per token and no request crosses the network.
+
+<details>
+<summary>Run the local engine</summary>
+
+```bash
+cd local-engine
+uv venv --python 3.12 .venv
+VIRTUAL_ENV=.venv uv pip install -r requirements.txt
+.venv/bin/python server.py                      # Eikos-4B (default), :8822
+.venv/bin/python server.py --model shisa-de-1   # Shisa DE-1 (needs: brew install llama.cpp)
+```
+
+Then run `quicke2e run ... --engine local`. Set `LOCAL_URL` if the server uses another port. The first
+start downloads the model. `GET /` reports the model, peak memory and decisions served. Details,
+prompt format and model licences: [`local-engine/README.md`](local-engine/README.md).
+
+</details>
+
+## The agent skill: a big model invents the cases
+
+`skill/quicke2e/SKILL.md` is an agent skill for Claude Code and compatible agents. The big model:
+
+1. reads the map and your source code,
+2. lists the business rules (`rule — file:line`),
+3. invents happy-path, boundary and refusal cases,
+4. writes the spec file and runs `check` and `run`,
+5. reports which failures are app bugs.
+
+The big model runs once to write the specs. The decision engine makes every decision of every run.
+Code decides pass or fail.
+
+## Reference
+
+<details>
+<summary>CLI</summary>
+
+```
+quicke2e discover <baseUrl> [--start /,/admin] [--safe] [--i-own-this-data] [--reset "<cmd>"]
+                            [--inputs inputs.json] [--storage state.json] [-o quicke2e.map.json]
+                            [--redact ".css-selector" --redact "/regex/i" ...] [--headed|--headless]
+quicke2e run <spec.mjs> [--base url] [--engine jev|local|vercel] [--map quicke2e.map.json]
+                        [--runs N] [--emit dir] [--trace dir] [--video dir] [--headed|--headless]
+                        [--allow-weak] [--only name]
+quicke2e check <spec.mjs> [--base url]
+```
+
+| flag | command | effect |
+|---|---|---|
+| `--start` | discover | comma-separated start paths (default `/`) |
+| `--safe` | discover | safe crawl: follows links, opens menus, dialogs and dropdowns, and never submits a form (see [Limits](#limits)) |
+| `--i-own-this-data` | discover | allow a full crawl on a host other than `localhost` |
+| `--reset "<cmd>"` | discover | command that restores seed data before the crawl |
+| `--inputs` | discover | JSON file with values for forms during the crawl |
+| `--storage` | discover | Playwright storage-state file |
+| `--max-pages` | discover | page limit for the crawl (default 40) |
+| `-o` | discover | output map file (default `quicke2e.map.json`) |
+| `--redact` | discover | CSS selector or `/regex/`; repeat the flag for more |
+| `--base` | run, check | app base URL (default `$APP_BASE`, then `http://localhost:3000`) |
+| `--engine` | run | `jev` (default), `local` or `vercel` |
+| `--map` | run | map file from `discover` |
+| `--runs` | run | runs per spec (default 1) |
+| `--only` | run, check | run only the spec with this `name` |
+| `--emit` | run | write a Playwright spec for each passing run |
+| `--trace` | run | write a JSON trace per run, with each step's start time and decision time |
+| `--video` | run | save a WebM per run. With `--trace`, each step in the trace also gets the box of the element it acted on. The video shows typed values |
+| `--allow-weak` | run | run a spec that failed the `WEAK_ASSERTION` check |
+| `--json` | run | print all run records as JSON |
+| `--headed` / `--headless` | all | force the browser mode |
+
+</details>
+
+<details>
+<summary>Spec fields</summary>
+
+A spec file exports an array of flows (`export default [...]`).
+
+| field | meaning |
+|---|---|
+| `name` | flow name, used in output, `--only` and emitted file names |
+| `start` | start path (default `/`) |
+| `base` | base URL for this flow; overrides `--base` |
+| `goal` | the task in plain English |
+| `inputs` | every value the run types, keyed by field label |
+| `expectUrl`, `expect`, `expectState`, `expectSeen` | the assertions (see [Verify](#3-verify)) |
+| `redact` | CSS selectors and text patterns the engine must never see |
+| `storageState` | Playwright storage state for the browser context |
+| `maxSteps` | step limit (default 14) |
+| `done` | optional plain-English end state, for the reader. The run loop does not send it to the engine |
+
+</details>
+
+<details>
+<summary>Run outcomes</summary>
+
+The outcome says why the run loop stopped. Pass or fail comes from the final assertion check.
+
+| outcome | meaning |
+|---|---|
+| `DONE_VERIFIED` | the assertions held on a snapshot |
+| `MODEL_BLOCKED` | the engine answered BLOCKED (or a key that was not offered) three times, each time on a page that did not change within 3 s |
+| `NO_SPEC_VALUE` | the run needed a value the spec does not have |
+| `MAX_STEPS` | the step limit ran out |
+| `ERROR` | the run threw an error |
+
+</details>
 
 ## Limits
 
-- **It checks your assertions. It does not find bugs you did not assert.** A green run proves the
-  assertion, not that the app is correct.
-- **Not a merge gate by itself.** A Jev run explores. The Playwright spec it emits can gate CI.
-- **Tested stacks only:** the eight above plus TicketBay. Not tested: canvas apps, cross-origin iframes
-  (Stripe Elements), closed shadow roots, native mobile.
-- **The verdict is deterministic; the path is not guaranteed.** The same state gives the same choice, but
-  page timing can add a step.
-- **Page content reaches the engine unless you declare it with `redact`.** Nothing guesses which page
-  text is sensitive: an automatic "looks like a code" rule was built and measured, and it broke four
-  working flows (order numbers, versions, SKUs, a year) while still missing other code shapes.
-- **A full crawl changes data.** Use a throwaway database. **`--safe` is best effort, not read-only:** it
-  clicks only controls that declare they open something (menus, tabs, dropdowns) and skips links that
-  name a destructive verb, but a GET link or an opener with a side effect can still change data.
-- **The `local` engines trail Jev slightly on the fixture suite** (58/59 and 56/59 against 59/59).
-  Eikos-4B is slower than Jev (a checkout in 4.4 s against 3.05 s); Shisa DE-1 is faster but needs a
-  32 GB Mac.
+- **QuickE2E checks only the assertions in the spec.** A green run proves those assertions and nothing else about the app.
+- **Use the emitted Playwright spec as the CI merge gate.** A model-driven run can take a different path on the next run.
+- **Tested stacks:** the eight above plus TicketBay. Not tested: canvas apps, cross-origin iframes (Stripe Elements), closed shadow roots, native mobile.
+- **The step count can vary.** Page timing can add a step. The verdict comes from code, so the same final page gives the same verdict.
+- **Page content reaches the engine unless you declare it with `redact`.** No rule guesses which page text is sensitive. An automatic "looks like a code" rule was built and measured: it broke four working flows (order numbers, versions, SKUs, a year) and still missed other code shapes.
+- **A full crawl changes data.** Use a throwaway database.
+- **`--safe` is best effort.** It clicks only controls that declare they open something (menus, tabs, dropdowns) and skips links whose text or URL names a destructive verb. A GET link or an opener with a side effect can still change data.
+- **The `local` engines fail more fixtures than Jev** (58/59 and 56/59 against 59/59). Eikos-4B is slower than Jev (a plain checkout in 4.4 s against 3.05 s). Shisa DE-1 is faster but needs a 32 GB Mac.
+
+<details>
+<summary>What does a run cost?</summary>
+
+- Hosted `jev`: the sum of the `usage.cost` that OpenRouter reports per decision. Measured: $0.00003 (a 1-step refund spec) to $0.00032 (an 8-step checkout) on TicketBay, and a mean of $0.00014 on the eight-stack matrix.
+- `local`: $0.
+- `discover` and `check` call no model, so they cost $0.
+- The agent skill runs on your own agent, at that agent's price.
+
+</details>
+
+<details>
+<summary>What data leaves my machine?</summary>
+
+With `jev` or `vercel`, each decision sends one request to OpenRouter or the Vercel AI Gateway. It
+holds:
+- the URL with token-like path segments replaced by `:id`, and the first 60 characters of the page title,
+- the offered elements: role and label (up to 44 characters each),
+- form values: a chosen option, a checkbox state, or a typed value that is exactly a non-secret spec value. Any other filled field is sent as `(filled)`,
+- the last 5 steps, the goal, and the list of legal moves,
+- for a field whose label matches no spec key: the label and the names of your unused spec keys (the values stay local).
+
+Strong secret values are scrubbed from all of it. Content you declare in `redact` is removed before the
+request is built. With `--map`, one or two extra requests send the app's host name and a summary of each
+mapped page (path pattern, heading, form fields). With `local`, requests go only to the local server
+(`127.0.0.1:8822` by default). `discover` and the emitted Playwright spec call no model.
+
+</details>
+
+<details>
+<summary>Which API keys do I need?</summary>
+
+| engine | key |
+|---|---|
+| `jev` | `OPENROUTER_API_KEY` |
+| `vercel` | `AI_GATEWAY_API_KEY` |
+| `local` | none |
+
+`discover`, `check` and `npm test` need no key.
+
+</details>
+
+<details>
+<summary>How do I use it in CI?</summary>
+
+1. Run `quicke2e run ... --emit e2e/generated/` locally until the spec passes.
+2. Commit the emitted `<name>.spec.ts` and run it with `npx playwright test`. It calls no model.
+3. Set `APP_BASE` to the app's URL, and set one environment variable per secret input (`<FLOW>_<KEY>`, for example `LOGIN_PASSWORD`).
+
+`quicke2e run` also works in CI. It runs headless when `CI` is set and exits with code 1 when a spec
+fails.
+
+</details>
 
 ## Design notes
 
-What we measured while building it:
-- **Remove bad options; do not instruct against them.** A decision model cannot be told out of a bad
-  choice. Take it away: no DONE while a dropdown is open, no submit while a spec field is unset, no
-  typing into a field the spec has no value for.
-- **Form state goes in `values`, not in the choice list.** The same fact as a non-choosable element made
-  Jev answer BLOCKED (0.37); as a `values` map it clicked Save (0.99).
-- **Never let the model judge success.** The deterministic check, run on every snapshot, fixed every
-  false DONE.
+<details>
+<summary>What we measured while building it</summary>
+
+- **Bad options are removed from the list.** A prompt instruction does not stop a decision model from picking a bad option, so the tool removes the option: no DONE option at all, no submit while a spec field is unset, no typing into a field the spec has no value for.
+- **Form state goes in a `values` map.** The same fact as a non-choosable element in the choice list made Jev answer BLOCKED (0.37). As a `values` map, Jev clicked Save (0.99).
+- **Code judges success.** The deterministic check runs on every snapshot, and the model is never asked whether the task is done. This removed every false DONE in the measured runs.
+
+</details>
+
+## Development
+
+```bash
+npm test     # the model-free test suite: no key, no cost
+```
+
+On every push and pull request, CI runs the model-free suite and the local-engine prompt tests. When
+the repo has an `OPENROUTER_API_KEY` secret, CI also runs the fixture flows on the hosted Jev engine.
 
 ## License
 
