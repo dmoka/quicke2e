@@ -343,7 +343,7 @@ Strong spec secrets in the suite: 0 leaks.
 
 ## Engines
 
-Select an engine with `--engine`.
+Select an engine with `--engine`. Jev is a model by TypeSafe. QuickE2E is an independent project, not affiliated with TypeSafe.
 
 | engine | setup | notes |
 |---|---|---|
