@@ -47,7 +47,9 @@ export function startStatic(port = 8899) {
     // A server error page (attack cases: a crafted URL that crashes the app).
     if (u.pathname === "/_500") { res.writeHead(500, { "Content-Type": TYPES[".html"] }); return res.end("<h1>Internal Server Error</h1><a href='/login.html'>Home</a>"); }
 
-    const rel = u.pathname === "/" ? "/login.html" : u.pathname;
+    // Path ids, like an app route: /orders/<n> serves one page for every n (map routing fixture).
+    const rel = u.pathname === "/" ? "/login.html" : u.pathname === "/orders" ? "/orders.html"
+      : /^\/orders\/\d+$/.test(u.pathname) ? "/order-id.html" : u.pathname;
     const file = path.join(DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ""));
     if (!file.startsWith(DIR) || !fs.existsSync(file)) { res.writeHead(404); return res.end("not found"); }
     res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "text/plain" });
