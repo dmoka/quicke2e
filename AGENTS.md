@@ -49,13 +49,25 @@ Flow fields:
 | `storageState` | no | Playwright storage state (object or file path), for a logged-in start |
 | `maxSteps` | no | step limit, default 14 |
 
-All given assertions must hold at the same time. The run checks them on every page snapshot.
+All given assertions must hold at the same time. The run checks them on every page snapshot and
+**stops as soon as they all hold**, so the assertions must describe the state after the last action.
+
+`expectState` roles: `textbox`, `password`, `combobox` (a native `<select>` or a custom dropdown trigger),
+`checkbox`, `radio`, `switch`, `button`, `link`, `tab`, `option`, `menuitem`. For a `<select>`, `value`
+is the visible text of the chosen option. `checked` applies to checkboxes, radios and switches;
+`selected` reads `aria-selected` (options, tabs).
 
 Rules:
 
+0. **Assert the result of the final action.** If the flow ends with a submit, assert the page after the
+   submit (`expectUrl` + `expect`). An assertion that already holds before the submit (the dropdown
+   shows "Growth") stops the run before the submit is clicked. Use `expectState` only for state that
+   stays on the final page.
+
 1. **Every value the run types goes in `inputs`**, keyed by words from the field's label. The engine
    never writes text. When no key matches a label ("E-mail" for key `email`), the engine picks which
-   key belongs in that field. A value the spec does not have ends the run (outcome `NO_SPEC_VALUE`).
+   key belongs in that field. A field with no key is left as it is. If the engine picks a field that
+   needs a value the spec does not have, the run ends (outcome `NO_SPEC_VALUE`): add that value to `inputs`.
 2. **Name every action the goal needs.** Write "apply the discount code WELCOME10", not "with the code
    WELCOME10": with the second wording the engine typed the code and never clicked Apply.
 3. **Assert the end state, not the start state.** `check` rejects a spec whose assertions already hold
@@ -88,7 +100,7 @@ repeats each flow.
 |---|---|---|
 | `flow` | string | the spec's `name` |
 | `passed` | boolean | the final assertion check: the result to trust |
-| `outcome` | string | why the loop stopped: `DONE_VERIFIED`, `MODEL_BLOCKED`, `NO_SPEC_VALUE`, `MAX_STEPS`, `ERROR` |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `MODEL_BLOCKED` (the engine found no useful action three times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`) |
 | `error` | string or null | the error message when `outcome` is `ERROR` |
 | `finalUrl` | string | the URL when the run ended |
 | `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |

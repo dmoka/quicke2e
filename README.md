@@ -151,7 +151,8 @@ Code decides success. It checks the assertions on every snapshot:
 | `expectState: [{ role, name, value \| checked \| selected }]` | a control has this state (a chosen option, a checked box, a field's value) |
 | `expectSeen` | this text appeared at any moment since the page loaded, such as a toast |
 
-A run passes when the assertions hold at the end of the run.
+The run stops on the first snapshot where all assertions hold, and that run passes. Write the assertions
+for the state after the last action: after a submit, assert the page the submit leads to.
 
 ### Text comes from the spec
 
