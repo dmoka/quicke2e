@@ -42,18 +42,19 @@ For each form and each rule, write cases in four kinds:
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
+- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
 - A closed window: an event that already started, a sold-out show.
 - A finished flow submitted again through its URL.
 - Required fields left empty or filled with garbage.
 
-Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack.
+Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
 
 Mark each attack spec with `kind: "attack"`. Prefer the cases a scripted suite does not have. Check the existing tests first and say which rules they skip.
 
 ### Limits of attack mode
 
 - One browser, one action at a time: no simultaneous double clicks, no races, no multi-tab flows.
-- No header, cookie or request tampering, and no network-level attacks.
+- No header, cookie or request-body tampering, and no network-level attacks. A crafted URL in `start` is in scope.
 - Those belong to API property tests or a code-level adversarial tester. Name them in the report as cases for that layer.
 - Attack only an app you own: localhost with a throwaway database, or a host the user confirms with `--i-own-this-data`.
 
@@ -97,6 +98,7 @@ Rules for the assertion — the assertion IS the test:
 - For a refusal, assert the refusal text AND that the success state is absent: `expectAbsent` holds text only success shows. `check` rejects an `expectAbsent` text that is already on the start page (`ABSENT_ON_START`).
 - A load attack (the start URL itself is the attack) needs `control`: a page where the app says yes. `check` then runs the `WEAK_ASSERTION` check on the control page, and the run checks the assertion on the start page before any step.
 - A value the app may accept (a script tag in a name field) is not a refusal case: assert that the next page shows the value as plain text.
+- Say the attack value and every action in the goal ("replace the name on tickets with only spaces, then pay"). With "the given value" the engine did not type into the field (measured: MODEL_BLOCKED 2/2; with the value named, 2/2 passed).
 - Field keys in `inputs` must match the field label ("email" matches "Email"). Labels that share a substring ("Email" and "Billing email") get the same value: give such fields distinct keys or avoid the case.
 
 If the page shows sensitive data the engine must not see (recovery codes, saved cards, personal
@@ -115,7 +117,7 @@ A `WEAK_ASSERTION` means the assertion already holds on the start page: rewrite 
 
 ## 6. Report
 
-For each failing spec: is it an APP bug (the rule in the source is violated) or a SPEC/TOOL problem (the run never reached the place)? Read the trace (`--trace runs/`) before you decide. The outcome tells you: `DONE_VERIFIED` = pass; `ABSENT_SEEN` = the app showed a success-only text, so it accepted the attack (record field `absentSeen`); `MAX_STEPS`/`MODEL_BLOCKED` = it got lost; a wrong final page with the success text visible = the app broke a rule.
+For each failing spec: is it an APP bug (the rule in the source is violated) or a SPEC/TOOL problem (the run never reached the place)? Read the trace (`--trace runs/`) before you decide. The outcome tells you: `DONE_VERIFIED` = pass; `ABSENT_SEEN` = the app showed a success-only text, so it accepted the attack (record field `absentSeen`); `SERVER_ERROR` = a page answered HTTP 5xx (record field `httpStatus`): an app bug, load the URL yourself to read the error; `MAX_STEPS`/`MODEL_BLOCKED` = it got lost; a wrong final page with the success text visible = the app broke a rule.
 
 - **Never edit a spec to make it pass.** A red refusal or attack case is the finding.
 - For each app bug: the rule (file:line), the spec name, what happened (outcome, `absentSeen`, final URL). Suggest the lowest-level test that would catch it: a unit test on the domain rule, or an API test on the route.

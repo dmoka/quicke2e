@@ -105,7 +105,7 @@ if (cmd === "run" || cmd === "check") {
       if (!rec.passed) failed++;
       out(`${rec.passed ? "PASS" : "FAIL"}  ${flow.name.padEnd(28)} ${String(rec.steps.length).padStart(2)} steps  `
         + `${(rec.wallMs / 1000).toFixed(1).padStart(5)}s  $${rec.cost.toFixed(5)}  ${rec.outcome}`
-        + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (flow.kind ? `  (${flow.kind})` : "")
+        + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (rec.httpStatus ? `  HTTP ${rec.httpStatus}` : "") + (flow.kind ? `  (${flow.kind})` : "")
         + (rec.route?.pattern ? `  via map -> ${rec.route.pattern}` : "") + (rec.error ? `  ${rec.error}` : ""));
       if (rec.passed && opt("--emit")) {
         const { generate } = await import("../codegen/codegen.mjs");

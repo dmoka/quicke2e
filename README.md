@@ -185,11 +185,12 @@ The agent skill can act as a malicious user. This is the instruction it follows,
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
+- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
 - A closed window: an event that already started, a sold-out show.
 - A finished flow submitted again through its URL.
 - Required fields left empty or filled with garbage.
 
-Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack.
+Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
 
 ```js
 // examples/ticketbay/attacks.mjs (TicketBay main, signed in as the seeded customer Anna)
@@ -211,9 +212,9 @@ On TicketBay main (2026-10-04), both specs in `examples/ticketbay/attacks.mjs` p
 spec takes 2 steps.
 
 **Limits of attack mode.** One browser and one action at a time: no simultaneous double clicks, races
-or multi-tab flows. No header, cookie or request tampering, and no network-level attacks. Test those
-with API property tests or a code-level adversarial tester. Attack only an app you own: the full crawl
-runs only on localhost unless you pass `--i-own-this-data`.
+or multi-tab flows. No header, cookie or request-body tampering, and no network-level attacks. Test those
+with API property tests or a code-level adversarial tester. A crafted URL in `start` is in scope. Attack
+only an app you own: the full crawl runs only on localhost unless you pass `--i-own-this-data`.
 
 ## Secrets and redaction
 
@@ -383,9 +384,9 @@ roots and iframes, hidden-text false passes, a 150-link page, a safe crawl.
 
 Strong spec secrets in the suite: 0 leaks.
 
-Attack mode added two pages and four fixtures (2026-10-04): an expired code in odd casing (refused, and
-refused-but-applied) and another user's order by URL (refused, and leaked). `jev` 4/4 and `local` Shisa
-DE-1 4/4, n=3. Against the code before attack mode, three of the four fail.
+Attack mode added two pages and five fixtures (2026-10-04): an expired code in odd casing (refused, and
+refused-but-applied), another user's order by URL (refused, and leaked), and a URL that answers HTTP 500.
+`jev` 5/5 and `local` Shisa DE-1 5/5, n=3. Against the code before attack mode, four of the five fail.
 
 ## Engines
 
@@ -512,6 +513,7 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 |---|---|
 | `DONE_VERIFIED` | the assertions held on a snapshot |
 | `ABSENT_SEEN` | an `expectAbsent` text appeared: the app accepted what it must refuse |
+| `SERVER_ERROR` | a page navigation answered with HTTP 5xx. The run fails, whatever the assertions say |
 | `MODEL_BLOCKED` | the engine answered BLOCKED (or a key that was not offered) three times, each time on a page that did not change within 3 s |
 | `NO_SPEC_VALUE` | the run needed a value the spec does not have |
 | `MAX_STEPS` | the step limit ran out |

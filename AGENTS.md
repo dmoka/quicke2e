@@ -86,11 +86,12 @@ Rules:
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
+- Crafted URLs in `start`: odd query values (`?qty=-3`), repeated parameters (`?code=A&code=B`), ids in another format (`/orders/0x2`).
 - A closed window: an event that already started, a sold-out show.
 - A finished flow submitted again through its URL.
 - Required fields left empty or filled with garbage.
 
-Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack.
+Every attack asserts two things. The app refuses: the refusal text or the error state the user sees goes in `expect`. The success state is absent: text that only success shows (the confirmation, the discount line, the refund line) goes in `expectAbsent`, never a label that is on the page at load. The refusal text alone is not enough, because an app can show the error and still apply the discount. When an `expectAbsent` text becomes visible, the run stops with outcome `ABSENT_SEEN`: the app accepted the attack. An error page (a 500) fails the run too, because the refusal text never appears.
 
 ```js
 export default [
@@ -107,8 +108,8 @@ export default [
 ```
 
 Limits: one browser and one action at a time (no double-click races, no multi-tab flows), and no
-header, cookie or network tampering. Test those with API property tests or a code-level adversarial
-tester. Attack only an app you own.
+header, cookie, request-body or network tampering (a crafted URL in `start` is in scope). Test those
+with API property tests or a code-level adversarial tester. Attack only an app you own.
 
 ### Run and read the result
 
@@ -127,16 +128,18 @@ repeats each flow.
   or `ABSENT_ON_START` check, or a start page was unreachable (line `UNREACHABLE <name>: <url> (...). Is the app running?`);
   `2` = usage error.
 - **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`,
-  then `saw "<text>"` after an `ABSENT_SEEN` and `(<kind>)` when the spec has a `kind`.
+  then `saw "<text>"` after an `ABSENT_SEEN`, `HTTP <status>` after a `SERVER_ERROR`, and `(<kind>)` when
+  the spec has a `kind`.
 - **Machine output:** with `--json`, the **last line of stdout** is a JSON array with one record per run.
 
 | record field | type | meaning |
 |---|---|---|
 | `flow` | string | the spec's `name` |
 | `passed` | boolean | the final assertion check: the result to trust |
-| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `MODEL_BLOCKED` (the engine found no useful action three times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`) |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action three times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`) |
 | `error` | string or null | the error message when `outcome` is `ERROR` |
 | `absentSeen` | string | only with `ABSENT_SEEN`: the `expectAbsent` text that appeared |
+| `httpStatus` | number | only with `SERVER_ERROR`: the 5xx status |
 | `kind` | string | only when the spec has a `kind` |
 | `finalUrl` | string | the URL when the run ended |
 | `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |

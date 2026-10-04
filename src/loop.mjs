@@ -466,6 +466,9 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });
   if (flow.expectSeen?.length) await context.addInitScript(SEEN_RECORDER);
   const page = await context.newPage();
+  // A 5xx answer to a main-frame navigation is never a result: the run stops with SERVER_ERROR.
+  let httpStatus = null;
+  page.on("response", (r) => { try { if (r.status() >= 500 && r.request().isNavigationRequest() && r.frame() === page.mainFrame()) httpStatus = r.status(); } catch {} });
   const videoAt = video ? Math.round(performance.now() - t0) : null;
   const steps = [], history = [];
   let outcome = "UNKNOWN", error = null, doneRejects = 0, blocked = 0;
@@ -551,6 +554,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
       // ATTACK MODE: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
       // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
+      if (httpStatus) { outcome = "SERVER_ERROR"; break; }
       if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }
       // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
       if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
@@ -736,16 +740,17 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   } catch (e) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; }
 
   const tLoopEnd = performance.now() - t0;
-  const passed = await checkGoal(page, flow);
+  if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
+  const passed = outcome !== "SERVER_ERROR" && await checkGoal(page, flow);
   // A success marker that appeared after the last step is still a finding, not "got lost".
-  if (!absentHit && outcome !== "ERROR" && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
+  if (!absentHit && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
   const videoFile = video ? await page.video()?.path() : null;
   await context.close();
   if (!shared) await browser.close();
   const rec = { flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}), base, engine, budget, outcome, passed, finalUrl, error,
-    ...(absentHit ? { absentSeen: absentHit } : {}), steps,
+    ...(absentHit ? { absentSeen: absentHit } : {}), ...(httpStatus ? { httpStatus } : {}), steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),

@@ -304,3 +304,12 @@ test("codegen: expectAbsent becomes a not.toContainText on the user-visible text
   assert.match(code, /not\.toContainText\("SUMMER25 25%", \{ useInnerText: true \}\)/);
   assert.deepEqual(sidecar.expectAbsent, ["SUMMER25 25%"]);
 });
+
+test("a 5xx answer to a navigation stops the run with SERVER_ERROR and fails it", async () => {
+  const rec = await runOnce({ flow: { name: "s", kind: "attack", start: "/_500", control: "/login.html", goal: "Open the page",
+    expect: ["Internal Server Error"] }, engine: "local", browser, base });
+  assert.equal(rec.outcome, "SERVER_ERROR");
+  assert.equal(rec.httpStatus, 500);
+  assert.equal(rec.passed, false);
+  assert.equal(rec.steps.length, 0);
+});

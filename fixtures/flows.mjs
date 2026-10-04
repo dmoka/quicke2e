@@ -416,6 +416,10 @@ export const FIXTURES = [
       goal: "Open order 9.", expect: ["Nothing here"], expectAbsent: ["Total paid"] },
     grade({ rec }) { return { ok: !rec.passed && rec.outcome === "ABSENT_SEEN", note: `${rec.outcome} saw=${rec.absentSeen}` }; } },
 
+  { id: "attack-server-error", defect: "A3 a crafted URL crashes the app: SERVER_ERROR, not MODEL_BLOCKED", kind: "flow", want: "fail",
+    flow: { name: "attack-server-error", kind: "attack", start: "/_500", maxSteps: 3, goal: "Open the checkout.", expect: ["Unknown discount code."] },
+    grade({ rec }) { return { ok: !rec.passed && rec.outcome === "SERVER_ERROR" && rec.steps.length === 0, note: `${rec.outcome} HTTP ${rec.httpStatus} in ${rec.steps.length} steps` }; } },
+
   // ---- probes: snapshot-level, no model, deterministic ----
   {
     id: "negative-control", defect: "7 must NOT be offered", kind: "probe", want: "pass",
