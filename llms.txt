@@ -13,3 +13,4 @@
 
 - [Fixture specs](https://github.com/dmoka/quicke2e/blob/main/examples/fixtures.spec.mjs): three specs against the bundled fixture pages
 - [TicketBay specs](https://github.com/dmoka/quicke2e/blob/main/examples/ticketbay/flows.mjs): booking with a discount code, refunds, checkout
+- [TicketBay attack specs](https://github.com/dmoka/quicke2e/blob/main/examples/ticketbay/attacks.mjs): attack mode: a disabled code in odd casing, another user's order by URL

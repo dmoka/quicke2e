@@ -9,3 +9,4 @@ local-engine/ablation.json
 test-results/
 fixtures/checkouts/
 bench/choice/results/
+.auth/

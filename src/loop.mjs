@@ -387,10 +387,21 @@ const SEEN_RECORDER = `(() => {
     .observe(document, { childList: true, subtree: true, characterData: true });
 })();`;
 
+// `expectAbsent` (attack mode): text a user must NOT see -- the success state an attack must never
+// reach (an order confirmation, a refund line). Returns the first such text on the page, or null.
+async function absentSeen(page, flow) {
+  if (!flow.expectAbsent?.length) return null;
+  try {
+    const seen = norm(await page.evaluate(`(${SEEN_TEXT})()`));
+    return flow.expectAbsent.find((x) => seen.includes(norm(x))) ?? null;
+  } catch { return null; }
+}
+
 async function checkGoal(page, flow, snap) {
   try {
     const urlOk = flow.expectUrl ? new RegExp(flow.expectUrl).test(page.url()) : true;
     if (!urlOk) return false;
+    if (await absentSeen(page, flow)) return false;
     // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: form
     // controls contribute nothing (assert them with expectState), hidden/aria-hidden text not at all.
     const need = [...(flow.expect || []), ...(flow.expectSeen || [])];
@@ -478,7 +489,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   };
   const echoed = () => [...weakTyped];
   const isOwn = (text) => before.has(norm(text).toLowerCase());
-  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null;
+  let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null, absentHit = null;
 
   try {
     await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" });
@@ -538,7 +549,11 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         snap.title = fix(snap.title);
         for (const a of snap.actions) { a.label = fix(a.label); if (a.optionLabel) a.optionLabel = fix(a.optionLabel); }
       }
-      if ((i > 0 || routeRec?.hops?.length) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
+      // ATTACK MODE: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
+      // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
+      if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }
+      // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
+      if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
 
       // FIX (v1, TicketBay D2): a field whose label contains no spec key (a rename: "Email" ->
       // "E-mail") used to be invisible to the test. Jev now picks WHICH spec key belongs in it --
@@ -722,12 +737,15 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
 
   const tLoopEnd = performance.now() - t0;
   const passed = await checkGoal(page, flow);
+  // A success marker that appeared after the last step is still a finding, not "got lost".
+  if (!absentHit && outcome !== "ERROR" && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
   const videoFile = video ? await page.video()?.path() : null;
   await context.close();
   if (!shared) await browser.close();
-  const rec = { flow: flow.name, base, engine, budget, outcome, passed, finalUrl, error, steps,
+  const rec = { flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}), base, engine, budget, outcome, passed, finalUrl, error,
+    ...(absentHit ? { absentSeen: absentHit } : {}), steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),
@@ -745,4 +763,4 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   return rec;
 }
 
-export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, ARIA, LETTER_CEILING };
+export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, absentSeen, ARIA, LETTER_CEILING };

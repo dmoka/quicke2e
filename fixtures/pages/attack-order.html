@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Order</title>
+<!-- ATTACK MODE, a load attack: the signed-in user owns order 3 only. Opening order 9 by its URL must
+     show "Nothing here" and no order details. ?leak=1 is the app bug: any order id shows its details.
+     The spec's `control` is order 3, where the assertion must be false. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}</style></head><body><script src="/truth.js"></script>
+<main id="m"></main>
+<script>
+var q = new URLSearchParams(location.search), id = q.get("id"), leak = q.get("leak") === "1";
+document.getElementById("m").innerHTML = (id === "3" || leak)
+  ? "<h1>Order #" + Number(id) + "</h1><p>Placed by Anna</p><p>Total paid €42.00</p><button data-truth='cancel'>Cancel order</button>"
+  : "<h1>Nothing here</h1><a href='/login.html' data-truth='back'>Back to events</a>";
+</script></body></html>

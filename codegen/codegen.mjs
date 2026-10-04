@@ -143,6 +143,8 @@ function assertions(flow, waitMs) {
     out.push(`  await expect(page.getByText(${q(w)}).first()).toBeVisible(${t ? `{ timeout: ${waitMs} }` : ""});`);
   for (const w of flow.expect || [])                    // loop.mjs:208-212 innerText substring,
     out.push(`  await expect(page.locator("body")).toContainText(${q(w)}${t});`);  // both sides normalised
+  for (const w of flow.expectAbsent || [])              // loop.mjs absentSeen(): after the positive checks, so the
+    out.push(`  await expect(page.locator("body")).not.toContainText(${q(w)}, { useInnerText: true });`);  // page has settled; innerText skips hidden text
   for (const w of flow.expectState || []) {             // loop.mjs:192-202 stateOk()
     const role = ARIA[w.role] || w.role;
     const loc = `page.getByRole(${q(role)}, { name: ${q(w.name)}, exact: true })`;
@@ -230,7 +232,7 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
   // re-explore ok=true and then emitted a byte-identical spec that failed again.
   const sidecar = { name: flow.name, start: flow.start, defaultBase: rec.base, maxSteps: flow.maxSteps,
     inputs: flow.inputs, goal: flow.goal, done: flow.done,
-    expectUrl: flow.expectUrl, expect: flow.expect, expectState: flow.expectState,
+    expectUrl: flow.expectUrl, expect: flow.expect, expectState: flow.expectState, expectAbsent: flow.expectAbsent,
     generatedFrom: { engine: rec.engine, outcome: rec.outcome, wallMs: rec.wallMs, steps: rec.steps.length },
     locators: kept.map((c) => ({ n: c.step.n, op: c.step.op, role: c.step.role, name: c.step.label })) };
   return { code: lines.join("\n"), sidecar, kept: kept.map((c) => c.step.n), dropped, classified,
