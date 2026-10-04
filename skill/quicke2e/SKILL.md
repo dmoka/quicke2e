@@ -1,9 +1,9 @@
 ---
-name: jevtester
-description: Invent and run exploratory browser test cases for a web app with jevtester. Maps the app, reads its source for business rules, writes goal-based specs with deterministic assertions, runs them with the Jev decision model, and reports findings. Use when the user says "jevtester", "explore my app", "find UI bugs", "write browser test cases", or wants adversarial end-to-end checks without writing selectors.
+name: quicke2e
+description: Invent and run exploratory browser test cases for a web app with quicke2e. Maps the app, reads its source for business rules, writes goal-based specs with deterministic assertions, runs them with the Jev decision model, and reports findings. Use when the user says "quicke2e", "explore my app", "find UI bugs", "write browser test cases", or wants adversarial end-to-end checks without writing selectors.
 ---
 
-# jevtester — invent the cases, let Jev drive, let code judge
+# quicke2e — invent the cases, let Jev drive, let code judge
 
 Division of labour. Do not blur it:
 - **You (the big model)** invent the cases and write the spec files. Once, offline.
@@ -15,7 +15,7 @@ Division of labour. Do not blur it:
 Ask for the base URL if you do not have it. Then:
 
 ```bash
-npx jevtester discover http://localhost:3000 --start / -o jevtester.map.json
+npx quicke2e discover http://localhost:3000 --start / -o quicke2e.map.json
 ```
 
 - Full crawl is the default on localhost: it submits forms. Use a throwaway database (`--reset "<cmd>"` to restore seed data).
@@ -40,7 +40,7 @@ Prefer the cases a scripted suite does not have. Check the existing tests first 
 
 ## 4. Write the spec
 
-One file, `jevtester.spec.mjs`, exporting an array:
+One file, `quicke2e.spec.mjs`, exporting an array:
 
 ```js
 export default [
@@ -72,8 +72,8 @@ api key, card number, token, …) are always kept out.
 ## 5. Check, then run
 
 ```bash
-npx jevtester check jevtester.spec.mjs --base http://localhost:3000     # rejects WEAK_ASSERTION specs
-npx jevtester run jevtester.spec.mjs --base http://localhost:3000 --map jevtester.map.json --runs 3
+npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000     # rejects WEAK_ASSERTION specs
+npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.map.json --runs 3
 ```
 
 A `WEAK_ASSERTION` means the assertion already holds on the start page: rewrite the assertion, never add `--allow-weak` to make it go away.

@@ -1,22 +1,32 @@
 {
-  "name": "jevtester",
-  "version": "0.1.1",
+  "name": "quicke2e",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Unofficial exploratory browser tester: it maps your app, a small decision model (Jev) picks the clicks, your spec supplies the typing, and code decides pass/fail.",
-  "main": "src/loop.mjs",
-  "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "fixtures": "node fixtures/run.mjs --checkout ."
+  "description": "Plain-English end-to-end browser tests: a small decision model picks each click, your spec supplies every typed value, code decides pass/fail, and a passing run exports a Playwright spec.",
+  "keywords": [
+    "e2e",
+    "end-to-end",
+    "testing",
+    "playwright",
+    "browser-testing",
+    "plain-english",
+    "ai-testing",
+    "decision-model",
+    "jev",
+    "exploratory-testing"
+  ],
+  "homepage": "https://github.com/dmoka/quicke2e#readme",
+  "bugs": {
+    "url": "https://github.com/dmoka/quicke2e/issues"
   },
-  "dependencies": {
-    "playwright": "^1.50.0"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.63.0"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dmoka/quicke2e.git"
   },
   "license": "MIT",
+  "main": "src/loop.mjs",
   "bin": {
-    "jevtester": "bin/jevtester.mjs"
+    "quicke2e": "bin/quicke2e.mjs"
   },
   "exports": {
     ".": "./src/loop.mjs",
@@ -35,13 +45,14 @@
   "engines": {
     "node": ">=20"
   },
-  "keywords": [
-    "playwright",
-    "e2e",
-    "testing",
-    "browser",
-    "agent",
-    "jev",
-    "exploratory-testing"
-  ]
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "fixtures": "node fixtures/run.mjs --checkout ."
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
 }

@@ -42,15 +42,15 @@ const PAGEINFO = () => {
 // synthetic value so the form can be submitted and the page behind it discovered.
 function defaultFor(label, role) {
   const l = (label || "").toLowerCase();
-  if (role === "password" || /password|passphrase/.test(l)) return "Jevtester-123!";
-  if (/e-?mail/.test(l)) return "jevtester@example.com";
+  if (role === "password" || /password|passphrase/.test(l)) return "Quicke2e-123!";
+  if (/e-?mail/.test(l)) return "quicke2e@example.com";
   if (/phone|tel/.test(l)) return "+15555550100";
   if (/qty|quantity|number|amount|count|tickets?\b|seats?/.test(l)) return "1";
   if (/url|website/.test(l)) return "https://example.com";
   if (/date/.test(l)) return "2030-01-01";
   if (/code|coupon|promo|discount/.test(l)) return "";
   if (/search|filter/.test(l)) return "";
-  return "jevtester";
+  return "quicke2e";
 }
 
 async function snap(page, redact = []) {

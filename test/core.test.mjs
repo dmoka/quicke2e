@@ -1,5 +1,5 @@
 // Model-free tests: they run anywhere (CI on Linux included), cost nothing, and cover every part
-// of jevtester that does not need a decision model. `node --test test/`
+// of quicke2e that does not need a decision model. `node --test test/`
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -101,7 +101,7 @@ test("CLI check: a spec whose assertion already holds is WEAK_ASSERTION", async 
     { name: "fine", start: "/login.html", goal: "Sign in", expectUrl: "login-done" }];`);
   let out = "";
   // async: a sync child would block this process, which is also serving the fixture pages
-  try { out = (await promisify(execFile)("node", ["bin/jevtester.mjs", "check", spec, "--base", base])).stdout; }
+  try { out = (await promisify(execFile)("node", ["bin/quicke2e.mjs", "check", spec, "--base", base])).stdout; }
   catch (e) { out = e.stdout; }
   fs.rmSync(spec);
   assert.match(out, /WEAK_ASSERTION\s+weak/);

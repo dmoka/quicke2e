@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// jevtester CLI.
-//   jevtester discover <baseUrl> [--start /,/admin] [--safe] [--i-own-this-data] [--reset "<cmd>"]
-//                                [--inputs inputs.json] [--storage state.json] [-o jevtester.map.json]
+// quicke2e CLI.
+//   quicke2e discover <baseUrl> [--start /,/admin] [--safe] [--i-own-this-data] [--reset "<cmd>"]
+//                                [--inputs inputs.json] [--storage state.json] [-o quicke2e.map.json]
 //                                [--redact ".css-selector" --redact "/regex/i" ...] [--headed|--headless]
-//   jevtester run <spec.mjs> [--base url] [--engine jev|local|vercel] [--map jevtester.map.json]
-//                            [--runs N] [--emit dir] [--trace dir] [--headed|--headless] [--allow-weak] [--only name]
-//   jevtester check <spec.mjs> [--base url]
+//   quicke2e run <spec.mjs> [--base url] [--engine jev|local|vercel] [--map quicke2e.map.json]
+//                            [--runs N] [--emit dir] [--trace dir] [--video dir] [--headed|--headless] [--allow-weak] [--only name]
+//   quicke2e check <spec.mjs> [--base url]
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -58,7 +58,7 @@ if (cmd === "discover") {
     maxPages: Number(opt("--max-pages", 40)), log: (m) => out("  " + m),
     redact: argv.flatMap((a, i) => (a === "--redact" ? [argv[i + 1]] : [])).map(parseRedactArg) });
   await dbrowser.close();
-  const file = opt("-o", "jevtester.map.json");
+  const file = opt("-o", "quicke2e.map.json");
   fs.writeFileSync(file, JSON.stringify(map, null, 2));
   out(`\n${map.pages.length} pages, ${map.edges.length} edges, ${map.pages.reduce((n, p) => n + p.forms.length, 0)} forms in ${(map.ms / 1000).toFixed(1)}s -> ${file}`);
   process.exit(0);
@@ -87,7 +87,8 @@ if (cmd === "run" || cmd === "check") {
     for (let k = 0; k < runs; k++) {
       const trace = opt("--trace") ? path.join(opt("--trace"), `${flow.name}-${Date.now()}.json`) : undefined;
       if (trace) fs.mkdirSync(opt("--trace"), { recursive: true });
-      const rec = await runOnce({ flow, engine, browser, base: fbase, trace, ...(map ? { map } : {}) });
+      const rec = await runOnce({ flow, engine, browser, base: fbase, trace, ...(map ? { map } : {}),
+        ...(opt("--video") ? { video: opt("--video") } : {}) });
       all.push(rec);
       if (!rec.passed) failed++;
       out(`${rec.passed ? "PASS" : "FAIL"}  ${flow.name.padEnd(28)} ${String(rec.steps.length).padStart(2)} steps  `

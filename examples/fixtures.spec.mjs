@@ -1,6 +1,6 @@
-// Try jevtester with no app of your own: these flows run against the bundled fixture pages.
+// Try quicke2e with no app of your own: these flows run against the bundled fixture pages.
 //   node fixtures/serve.mjs 8899 &
-//   node bin/jevtester.mjs run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
+//   node bin/quicke2e.mjs run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
 export default [
   { name: "login", start: "/login.html", maxSteps: 8,
     inputs: { email: "member@example.test", password: "Demo-Pass-42!" },

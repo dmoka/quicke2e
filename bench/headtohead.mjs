@@ -1,4 +1,4 @@
-// Head-to-head on TicketBay's plain checkout: (a) Claude Code + Playwright MCP, (b) jevtester.
+// Head-to-head on TicketBay's plain checkout: (a) Claude Code + Playwright MCP, (b) quicke2e.
 // Same start page, same goal text, same DB reset before every run, same SQL pass check.
 //   node bench/headtohead.mjs --arm claude --model sonnet --n 5
 //   node bench/headtohead.mjs --arm jev --n 5
@@ -42,7 +42,7 @@ for (let k = 0; k < N; k++) {
     rec = { cost: j.total_cost_usd ?? null, turns: j.num_turns ?? null, apiMs: j.duration_api_ms ?? null,
       said: String(j.result ?? "").slice(-60), error: j.parseError || (j.is_error ? j.subtype : null) };
   } else {
-    const r = spawnSync("node", [path.join(ROOT, "bin/jevtester.mjs"), "run", SPEC, "--only", "checkout-plain",
+    const r = spawnSync("node", [path.join(ROOT, "bin/quicke2e.mjs"), "run", SPEC, "--only", "checkout-plain",
       "--base", BASE, "--engine", arg("engine", "jev"), "--json"], { encoding: "utf8", timeout: 600000 });
     const last = (r.stdout || "").trim().split("\n").pop();
     let j = []; try { j = JSON.parse(last); } catch {}

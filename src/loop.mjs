@@ -443,14 +443,20 @@ async function act(page, action, fn) {
 }
 
 export async function runOnce({ flow, engine = "local", budget = 30, browser: shared, trace,
-                                base, context: ctxOpts, map, route: routeMode = "click" } = {}) {
+                                base, context: ctxOpts, map, route: routeMode = "click", video } = {}) {
   base = (flow.base || base || DEFAULT_BASE).replace(/\/$/, "");
   const t0 = performance.now();
   const browser = shared || await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 },
+  // VIDEO (--video dir): Playwright records the viewport; the step record then carries each step's
+  // start time and the target's box, so a replay can show what was clicked and when. The video is
+  // what the browser showed -- typed values included -- so it is written only when asked for.
+  const size = { width: 1280, height: 900 };
+  const context = await browser.newContext({ viewport: size,
+    ...(video ? { recordVideo: { dir: video, size } } : {}),
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });
   if (flow.expectSeen?.length) await context.addInitScript(SEEN_RECORDER);
   const page = await context.newPage();
+  const videoAt = video ? Math.round(performance.now() - t0) : null;
   const steps = [], history = [];
   let outcome = "UNKNOWN", error = null, doneRejects = 0, blocked = 0;
   const filled = new Set();
@@ -501,6 +507,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     }
     for (let i = 0; i < (flow.maxSteps || 14); i++) {
       let snap;
+      const at = Math.round(performance.now() - t0);
       await settle(page);
       try { snap = await page.evaluate(`(${SNAPSHOT})()`); }
       catch { await page.waitForTimeout(150); snap = await page.evaluate(`(${SNAPSHOT})()`); }
@@ -631,7 +638,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       // kept only the label, so a trace could not reproduce the locator act() itself used.
       // `tag` distinguishes a native <select> combobox from a <button role=combobox> trigger,
       // which need different assertions (toHaveValue vs toContainText).
-      const step = { n: i + 1, url: snap.url, op, target: tIdx, label: action?.label ?? null,
+      const step = { n: i + 1, at, decidedAt: Math.round(performance.now() - t0), url: snap.url, op, target: tIdx, label: action?.label ?? null,
         role: action?.role ?? null, tag: action?.tag ?? null,
         confidence: d.confidence, ms: Math.round(d.ms), inferMs: d.inferMs, tokens: d.tokens,
         options: Object.keys(space.criteria).length, dropped: space.dropped, truncated: d.truncated,
@@ -660,6 +667,11 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
 
       const before = page.url();
+      if (video && action) {
+        const b = await page.locator(`[data-jev-node="${op === "SELECT" ? action.selectNode : action.node}"]`).first()
+          .boundingBox({ timeout: 300 }).catch(() => null);
+        if (b) step.box = { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) };
+      }
       if (op === "TYPE_TEXT") {
         const v = specValue(flow, action, keyMap);
         if (v === null) { step.noSpecValue = true; steps.push(step); outcome = "NO_SPEC_VALUE"; break; }
@@ -713,12 +725,14 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   const passed = await checkGoal(page, flow);
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
+  const videoFile = video ? await page.video()?.path() : null;
   await context.close();
   if (!shared) await browser.close();
   const rec = { flow: flow.name, base, engine, budget, outcome, passed, finalUrl, error, steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),
+    ...(video ? { video: { file: videoFile, at: videoAt, size } } : {}),
     tLoopEnd: Math.round(tLoopEnd), tCheck: Math.round(tCheck) };
   // SECURITY (audit): the trace on disk is scrubbed too -- a GET form puts a password in finalUrl.
   rec.weakEchoed = echoed();

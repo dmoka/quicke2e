@@ -1,6 +1,6 @@
 # local-engine — free, offline decision engines (Apple Silicon)
 
-`--engine local` for jevtester. It runs an open **decision model**: a model trained to pick one of a
+`--engine local` for quicke2e. It runs an open **decision model**: a model trained to pick one of a
 list of options for a goal. It never generates text. The page state, the goal and the offered options
 go into one structured prompt, and the model reads the next-token logits of the option labels only. It
 cannot return an option that was not offered, and `confidence` is a softmax over the offered set.
@@ -15,7 +15,7 @@ VIRTUAL_ENV=.venv uv pip install -r requirements.txt
 .venv/bin/python server.py --model shisa-de-1   # Shisa DE-1, the fast one (needs: brew install llama.cpp)
 ```
 
-Then `jevtester run ... --engine local` (set `LOCAL_URL` if you use another port). The first start
+Then `quicke2e run ... --engine local` (set `LOCAL_URL` if you use another port). The first start
 downloads the model. `GET /` reports the model, peak memory and decisions served.
 
 ## Which model

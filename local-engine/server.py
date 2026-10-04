@@ -1,4 +1,4 @@
-"""Local decision engine for jevtester (`--engine local`). Apple Silicon.
+"""Local decision engine for quicke2e (`--engine local`). Apple Silicon.
 
   POST /  {state, questions:{action:{criteria, instructions:{goal, rules}}}}
        -> {answers:{action:{choice, confidence, probabilities}}, timing, usage}
@@ -233,7 +233,7 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="jevtester local decision engine")
+    ap = argparse.ArgumentParser(description="quicke2e local decision engine")
     ap.add_argument("--model", choices=sorted(PROFILES), default="eikos-4b")
     ap.add_argument("--port", type=int, default=8822)
     ap.add_argument("--llama-port", type=int, default=8823, help="internal port for llama-server (shisa-de-1)")

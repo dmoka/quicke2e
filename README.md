@@ -1,14 +1,21 @@
-# jevtester
+# QuickE2E
 
-> **Unofficial.** Not affiliated with TypeSafe, the makers of Jev. (Not to be confused with `jevtest`,
-> an unrelated Vitest/Jest matcher package.)
+![QuickE2E buys two tickets with a discount code on TicketBay, from the home page, in 4.8 seconds](docs/demo.gif)
+
+*Real time, not sped up. Task: from the home page, buy 2 tickets with the discount code WELCOME10.
+Median of 5 runs each, all passed, same database check: **QuickE2E 4.79 s** (hosted Jev) and **3.23 s**
+(local Shisa DE-1, $0), **Claude Code + Playwright MCP (Sonnet 5) 20.89 s**. Cost per run $0.00030
+against $0.0888. Measured 2026-09-30 on an M2 Max; see [the launch-video task](#the-launch-video-task).*
+
+> Formerly `jevtester`. **Unofficial:** not affiliated with TypeSafe, the makers of the Jev model that
+> the default engine uses.
 
 **An exploratory browser tester. It maps your app, a small decision model picks the clicks, your spec
 supplies every typed value, and code decides pass or fail. A passing run becomes a plain Playwright
 spec.**
 
 ```js
-// jevtester.spec.mjs
+// quicke2e.spec.mjs
 export default [{
   name: "book-with-code",
   start: "/events/midnight-arcade-neon-tour",
@@ -20,40 +27,44 @@ export default [{
 ```
 
 ```
-$ npx jevtester run jevtester.spec.mjs --base http://localhost:3200
+$ npx quicke2e run quicke2e.spec.mjs --base http://localhost:3200
 PASS  book-with-code                8 steps    4.3s  $0.00032  DONE_VERIFIED
 ```
 
 No selectors. The model never types, and it never decides whether the test passed. With the default
 `jev` engine there is no LLM in the run loop.
 
-**On the same checkout flow, jevtester was 7.10× faster and 614× cheaper than Claude Code driving
+**On the same checkout flow, quicke2e was 7.10× faster and 614× cheaper than Claude Code driving
 Playwright MCP (Sonnet 5), and 8.30× faster and 675× cheaper than it on Opus 5.5.** Details below.
 
 ## Quick start
 
 ```bash
-npm install -D jevtester && npx playwright install chromium
+npm install -D quicke2e && npx playwright install chromium
 export OPENROUTER_API_KEY=...                    # the Jev engine, via OpenRouter
-npx jevtester run jevtester.spec.mjs --base http://localhost:3000
+npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000
 ```
 
 No app handy? Clone the repo and run the examples against the bundled fixture pages:
 
 ```bash
-git clone https://github.com/dmoka/jevtester && cd jevtester && npm ci && npx playwright install chromium
+git clone https://github.com/dmoka/quicke2e && cd quicke2e && npm ci && npx playwright install chromium
 node fixtures/serve.mjs 8899 &
-npx jevtester run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
+npx quicke2e run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
 ```
 
 On your own app:
 
 ```bash
-npx jevtester discover http://localhost:3000 -o jevtester.map.json      # map the app (once)
-npx jevtester check jevtester.spec.mjs --base http://localhost:3000    # reject weak assertions
-npx jevtester run   jevtester.spec.mjs --base http://localhost:3000 --map jevtester.map.json
-npx jevtester run   jevtester.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
+npx quicke2e discover http://localhost:3000 -o quicke2e.map.json      # map the app (once)
+npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000    # reject weak assertions
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.map.json
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --video runs/        # record the browser
 ```
+
+`--video <dir>` saves a WebM of each run, and with `--trace <dir>` every step's start time, decision time
+and the box of the element it acted on. The video shows what the browser showed, typed values included.
 
 The browser is visible when you run a command yourself in a terminal, so you can watch what the model
 does. It runs headless in CI (`CI` set), without a display, or when the output is piped. `--headed` and
@@ -65,7 +76,7 @@ does. It runs headless in CI (`CI` set), without a display, or when the output i
 
 Three parts, and only one of them is a model.
 
-1. **Discover (once).** `jevtester discover` crawls the app with plain Playwright and writes a map:
+1. **Discover (once).** `quicke2e discover` crawls the app with plain Playwright and writes a map:
    pages (`/events/:id`), the links and buttons between them, and every form with its fields, options,
    and where its submit leads. On `localhost` it submits forms (a full crawl), so point it at a
    throwaway database; `--reset "<cmd>"` restores your seed data first. On any other host it refuses
@@ -128,9 +139,9 @@ total). Wall time is the whole command, end to end, including browser or MCP sta
 
 | | pass | median wall | cost / run |
 |---|---|---|---|
-| **jevtester, `jev` engine** | **5/5** | **3.05 s** | **$0.000153** |
-| jevtester, `local` engine, Shisa DE-1 | 5/5 | **2.04 s** | $0 |
-| jevtester, `local` engine, Eikos-4B | 5/5 | 4.36 s | $0 |
+| **quicke2e, `jev` engine** | **5/5** | **3.05 s** | **$0.000153** |
+| quicke2e, `local` engine, Shisa DE-1 | 5/5 | **2.04 s** | $0 |
+| quicke2e, `local` engine, Eikos-4B | 5/5 | 4.36 s | $0 |
 | Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 21.67 s | $0.0940 |
 | Claude Code + Playwright MCP, Opus 5.5 | 5/5 | 25.34 s | $0.1033 |
 
@@ -142,6 +153,33 @@ Both approaches pass; the difference is time and money. Reproduce: `node bench/h
 and `node bench/headtohead.mjs --arm claude --model sonnet --n 5` (needs a running TicketBay); raw runs
 in `bench/results/h2h-final.json`.
 
+### The launch-video task
+
+The GIF at the top. The agent starts on the home page, finds the event in the list, opens it, continues
+to checkout, applies WELCOME10, enters the email and name, and pays. Same database check as above (one
+new paid order, WELCOME10 applied, total €109.39). TicketBay in its dark theme, measured 2026-09-30.
+
+| | pass | median wall | steps | cost / run |
+|---|---|---|---|---|
+| **QuickE2E, `local` engine, Shisa DE-1** | **5/5** | **3.23 s** | 7 | **$0** |
+| **QuickE2E, `jev` engine** | **5/5** | **4.79 s** | 7 | $0.00030 |
+| Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 20.89 s (18.4–37.3) | 13–15 tool calls | $0.0888 |
+
+Median decision time: 94 ms on Shisa DE-1 (local, no network), 327 ms on hosted Jev. TicketBay here is
+the benchmark commit with one checkout fix: the discount-code form no longer reloads the page and wipes
+the typed details (`e40d86c` on TicketBay `main`). Before that fix, QuickE2E typed the email and name a
+second time after applying the code.
+
+Reproduce (needs that TicketBay running on :3200, `APP_DIR` and `DATABASE_URL` for `reset.sh`):
+
+```bash
+node bench/demo-capture.mjs --arm jev --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
+node bench/demo-capture.mjs --arm claude --model sonnet --n 5 --dark --spec bench/demo-flows.mjs --flow buy-from-home --out runs/demo
+```
+
+Each run writes a video and a timeline (steps, timestamps, tokens, cost). Claude Code's browser is
+launched and recorded by the script and reached by the MCP server over CDP, so its video is complete.
+
 **Eight UI stacks × three tasks.** Vanilla HTML, React + MUI, React + Ant Design, React + Radix/shadcn,
 Vue 3 + Element Plus, Web Components (Shoelace + Lit, shadow DOM), a form inside a same-origin iframe,
 and a legacy jQuery/table page. Tasks: log in; fill a form with a text field, a dropdown and a checkbox;
@@ -149,7 +187,7 @@ open row 57 of a 60-row list.
 
 | | pass | median run | cost / run |
 |---|---|---|---|
-| jevtester | **120/120** (n=5 per cell) | 1.8 s | $0.00014 |
+| quicke2e | **120/120** (n=5 per cell) | 1.8 s | $0.00014 |
 
 Reproduce (about 4 minutes, about $0.014):
 
@@ -194,7 +232,7 @@ iframes, hidden-text false passes, a 150-link page, a safe crawl. **jev 59/59; l
 
 ## The skill: let a big model invent the cases
 
-`skill/jevtester/SKILL.md` is an agent skill (Claude Code and compatible agents). The big model reads the
+`skill/quicke2e/SKILL.md` is an agent skill (Claude Code and compatible agents). The big model reads the
 map and your source code, lists the business rules (`rule — file:line`), invents happy-path, boundary
 and refusal cases, writes the spec file, runs `check` and `run`, and reports which failures are app
 bugs. The split is deliberate: the big model thinks once, offline; Jev drives cheaply, many times; code
