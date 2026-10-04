@@ -14,6 +14,8 @@ export OPENROUTER_API_KEY=...   # engine "jev" (default). Engine "vercel" reads 
 The engine `local` needs no key: start `local-engine/server.py` (Apple Silicon only) and set `LOCAL_URL`
 if it does not listen on `http://127.0.0.1:8822`.
 
+In a checkout of this repo, run the CLI as `node bin/quicke2e.mjs` instead of `npx quicke2e`.
+
 ### Write a spec
 
 A spec file exports an array of flows. One flow = one goal and its assertions.
@@ -29,6 +31,25 @@ export default [{
   expect: ["Payment confirmed", "Total paid €109.39"],      // text a user sees on the final page
 }];
 ```
+
+Flow fields:
+
+| field | required | format and matching |
+|---|---|---|
+| `name` | yes | string, unique in the file |
+| `goal` | yes | the task in plain English |
+| `start` | no | a path, appended to the base URL (default `/`). Not a full URL |
+| `base` | no | base URL for this flow. Order: `base`, then `--base`, then `$APP_BASE`, then `http://localhost:3000` |
+| `inputs` | no | `{ "<words from the field label>": "<value>" }` |
+| `expectUrl` | no | a JavaScript regex string, tested against the **full** final URL, unanchored. Escape `.` and `?` |
+| `expect` | no | array of strings. Each must appear in the text a user sees on the page, as a substring, case-sensitive, after whitespace is collapsed. Form control values do not count |
+| `expectSeen` | no | like `expect`, but passes if the text appeared at any moment since the page loaded (toasts) |
+| `expectState` | no | array of `{ role, name, value, selected, checked, expanded }`; every given key must match one control. `name` = the control's label (exact), `value` = substring |
+| `redact` | no | array of CSS selector strings and `RegExp` objects (`/recovery code \S+/i`) |
+| `storageState` | no | Playwright storage state (object or file path), for a logged-in start |
+| `maxSteps` | no | step limit, default 14 |
+
+All given assertions must hold at the same time. The run checks them on every page snapshot.
 
 Rules:
 
@@ -46,13 +67,20 @@ Rules:
 
 ### Run and read the result
 
+The app must be running for both commands: `check` loads each start page.
+
 ```bash
 npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000     # validate specs, no model call
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --json --headless
+npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --engine local --only book-with-code
 ```
 
-- **Exit code:** `0` = every run passed; `1` = a run failed or a spec failed the `WEAK_ASSERTION`
-  check; `2` = usage error.
+`--engine jev|vercel|local` picks the engine (default `jev`). `--only <name>` runs one flow. `--runs N`
+repeats each flow.
+
+- **Exit code:** `0` = every run passed; `1` = a run failed, a spec failed the `WEAK_ASSERTION`
+  check, or a start page was unreachable (line `UNREACHABLE <name>: <url> (...). Is the app running?`);
+  `2` = usage error.
 - **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`.
 - **Machine output:** with `--json`, the **last line of stdout** is a JSON array with one record per run.
 
@@ -67,6 +95,9 @@ npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --json --headl
 | `wallMs` | number | total run time in ms |
 | `cost` | number | engine cost in USD (`0` on `local`) |
 | `engine` | string | `jev`, `vercel` or `local` |
+
+Other fields (`base`, `budget`, `decideMs`, `inferMs`, `weakEchoed`, per-step `target`, `inputKey`, `via`,
+`tokens`) are diagnostics. Do not depend on them.
 
 On a failure, read `outcome`, then the last entries of `steps` (the page and the elements the engine
 chose), then `finalUrl`. Add `--trace <dir>` for a full JSON trace per run and `--video <dir>` for a

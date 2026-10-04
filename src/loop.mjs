@@ -391,8 +391,8 @@ async function checkGoal(page, flow, snap) {
   try {
     const urlOk = flow.expectUrl ? new RegExp(flow.expectUrl).test(page.url()) : true;
     if (!urlOk) return false;
-    // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: a closed
-    // <select> reads as its chosen option, an input as its value, hidden/aria-hidden text not at all.
+    // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: form
+    // controls contribute nothing (assert them with expectState), hidden/aria-hidden text not at all.
     const need = [...(flow.expect || []), ...(flow.expectSeen || [])];
     const seen = need.length ? norm(await page.evaluate(`(${SEEN_TEXT})()`)) : "";
     if (!(flow.expect || []).every((x) => seen.includes(norm(x)))) return false;

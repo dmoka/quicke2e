@@ -80,7 +80,14 @@ if (cmd === "run" || cmd === "check") {
     const weakKeys = weakSecretKeys(flow.inputs);
     if (weakKeys.length) out(`note: ${flow.name}: ${weakKeys.join(", ")} ${weakKeys.length > 1 ? "are" : "is a"} weak secret${weakKeys.length > 1 ? "s" : ""}`
       + ` (short or a common word). It is kept out of the goal, but the page may echo it to the engine.`);
-    if (await weak(flow, fbase, browser)) {
+    // An app that is not running is the most common first failure: say so in one line, not a stack trace.
+    let isWeak;
+    try { isWeak = await weak(flow, fbase, browser); }
+    catch (e) {
+      out(`UNREACHABLE     ${flow.name}: ${fbase.replace(/\/$/, "")}${flow.start || "/"} (${String(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`);
+      failed++; continue;
+    }
+    if (isWeak) {
       out(`WEAK_ASSERTION  ${flow.name}: the assertion is already true on ${flow.start || "/"} before any work.`);
       if (cmd === "check" || !flag("--allow-weak")) { failed++; continue; }
     } else if (cmd === "check") { out(`ok              ${flow.name}`); continue; }
