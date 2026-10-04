@@ -20,12 +20,10 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/quicke2e"><img alt="npm" src="https://img.shields.io/npm/v/quicke2e"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-  <a href="https://github.com/dmoka/quicke2e/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dmoka/quicke2e/ci.yml?branch=main&label=ci"></a>
+  <a href="https://github.com/dmoka/quicke2e/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/dmoka/quicke2e/actions/workflows/ci.yml/badge.svg?branch=main"></a>
 </p>
 
 <p align="center"><sub>For AI agents: <a href="AGENTS.md"><code>AGENTS.md</code></a> (spec rules, exit codes, the <code>--json</code> record) · <a href="llms.txt"><code>llms.txt</code></a> · <a href="skill/quicke2e/SKILL.md">agent skill</a></sub></p>
-
-<p align="center"><sub>Formerly <code>jevtester</code>. Unofficial: not affiliated with TypeSafe, the makers of the Jev model.</sub></p>
 
 <br>
 <br>
