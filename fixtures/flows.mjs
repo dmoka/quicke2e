@@ -402,6 +402,24 @@ export const FIXTURES = [
     start: "/redact3.html", inputs: { nickname: "home" }, redact: [".bc"],
     goal: "Set the nickname to home and save the settings.", done: "Saved.", expectUrl: "done\\.html\\?Nick=home" }, /AB12CD34/i),
 
+  // ---- attack cases: the app must refuse, and the success state must stay absent ----
+  attack("attack-code-refused", "A1 an expired code in odd casing is refused and the total is unchanged",
+    "/attack-code.html", "pass"),
+  attack("attack-code-accepted", "A1b refusal text shown, but the discount applied anyway: expect alone is a FALSE PASS",
+    "/attack-code.html?bug=1", "fail"),
+  { id: "attack-order-refused", defect: "A2 another user's order by URL: the load is the attack (control, step 0)", kind: "flow", want: "pass",
+    flow: { name: "attack-order-refused", kind: "attack", start: "/attack-order.html?id=9", control: "/attack-order.html?id=3", maxSteps: 3,
+      goal: "Open order 9.", expect: ["Nothing here"], expectAbsent: ["Total paid"] },
+    grade({ rec }) { return { ok: rec.passed && rec.steps.length === 0, note: `${rec.outcome} in ${rec.steps.length} steps` }; } },
+  { id: "attack-order-leaked", defect: "A2b the app shows another user's order: ABSENT_SEEN on load", kind: "flow", want: "fail",
+    flow: { name: "attack-order-leaked", kind: "attack", start: "/attack-order.html?id=9&leak=1", control: "/attack-order.html?id=3", maxSteps: 3,
+      goal: "Open order 9.", expect: ["Nothing here"], expectAbsent: ["Total paid"] },
+    grade({ rec }) { return { ok: !rec.passed && rec.outcome === "ABSENT_SEEN", note: `${rec.outcome} saw=${rec.absentSeen}` }; } },
+
+  { id: "attack-server-error", defect: "A3 a crafted URL crashes the app: SERVER_ERROR, not MODEL_BLOCKED", kind: "flow", want: "fail",
+    flow: { name: "attack-server-error", kind: "attack", start: "/_500", maxSteps: 3, goal: "Open the checkout.", expect: ["Unknown discount code."] },
+    grade({ rec }) { return { ok: !rec.passed && rec.outcome === "SERVER_ERROR" && rec.steps.length === 0, note: `${rec.outcome} HTTP ${rec.httpStatus} in ${rec.steps.length} steps` }; } },
+
   // ---- probes: snapshot-level, no model, deterministic ----
   {
     id: "negative-control", defect: "7 must NOT be offered", kind: "probe", want: "pass",
@@ -478,4 +496,18 @@ function falsePass(id, defect, start) {
   return { id, defect, kind: "flow", want: "fail",
     flow: { name: id, start, maxSteps: 4, goal: "Pay for the order.", done: "The payment is confirmed.", expect: ["Payment confirmed"] },
     grade({ rec }) { return { ok: !rec.passed, note: rec.passed ? `FALSE PASS (${rec.outcome}) — the page says "Payment failed"` : `correctly failed ${rec.outcome}` }; } };
+}
+
+// Attack case (expectAbsent): an expired code typed in odd casing. The refusal text alone is not the
+// test: the discount line must also stay absent, or the app accepted the attack (ABSENT_SEEN).
+function attack(id, defect, start, want) {
+  return { id, defect, kind: "flow", want,
+    flow: { name: id, kind: "attack", start, maxSteps: 5, inputs: { "discount code": "summer25" },
+      goal: "Apply the discount code summer25.", expect: ["This code has expired."], expectAbsent: ["SUMMER25 25%"] },
+    grade({ rec, truth }) {
+      const applied = clicked(truth).includes("apply");
+      return want === "pass"
+        ? { ok: rec.passed && applied, note: `${rec.outcome}; apply clicked=${applied}` }
+        : { ok: !rec.passed && rec.outcome === "ABSENT_SEEN" && applied, note: `${rec.outcome} saw=${rec.absentSeen}; apply clicked=${applied}` };
+    } };
 }
