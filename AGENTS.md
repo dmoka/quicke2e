@@ -80,9 +80,9 @@ Rules:
 5. **Put content the engine must never see in `redact`** (CSS selectors or `/regex/` patterns).
    Secret-looking `inputs` values are scrubbed from engine requests automatically.
 
-### Attack mode
+### Attack cases
 
-**Attack: act as a malicious user.** Think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
+**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
@@ -106,6 +106,8 @@ export default [
     goal: "Open order TB-00001.", expect: ["Nothing here"], expectAbsent: ["Total paid"] },
 ];
 ```
+
+Run the happy paths first. When one fails, the attacks on that flow wait until it passes.
 
 Limits: one browser and one action at a time (no double-click races, no multi-tab flows), and no
 header, cookie, request-body or network tampering (a crafted URL in `start` is in scope). Test those

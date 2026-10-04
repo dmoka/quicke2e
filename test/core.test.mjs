@@ -265,7 +265,7 @@ test("redact text cut: whole tokens, separator-flexible, and never for texts und
 
 import { runOnce } from "../src/loop.mjs";
 
-test("attack mode: a load attack passes on the start page with no engine call; a leak stops with ABSENT_SEEN", async () => {
+test("attack cases: a load attack passes on the start page with no engine call; a leak stops with ABSENT_SEEN", async () => {
   // engine "local" with no local server: any decision would end the run with ERROR
   const flow = { name: "a", kind: "attack", start: "/attack-order.html?id=9", control: "/attack-order.html?id=3",
     goal: "Open order 9.", expect: ["Nothing here"], expectAbsent: ["Total paid"], maxSteps: 3 };

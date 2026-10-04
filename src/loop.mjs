@@ -387,7 +387,7 @@ const SEEN_RECORDER = `(() => {
     .observe(document, { childList: true, subtree: true, characterData: true });
 })();`;
 
-// `expectAbsent` (attack mode): text a user must NOT see -- the success state an attack must never
+// `expectAbsent` (attack cases): text a user must NOT see -- the success state an attack must never
 // reach (an order confirmation, a refund line). Returns the first such text on the page, or null.
 async function absentSeen(page, flow) {
   if (!flow.expectAbsent?.length) return null;
@@ -552,7 +552,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         snap.title = fix(snap.title);
         for (const a of snap.actions) { a.label = fix(a.label); if (a.optionLabel) a.optionLabel = fix(a.optionLabel); }
       }
-      // ATTACK MODE: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
+      // ATTACK CASES: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
       // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
       if (httpStatus) { outcome = "SERVER_ERROR"; break; }
       if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }

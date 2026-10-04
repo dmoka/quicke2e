@@ -12,7 +12,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#attack-mode">Attack mode</a> ·
+  <a href="#attack-cases">Attack cases</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="#engines">Engines</a> ·
   <a href="#limits">Limits</a>
@@ -167,7 +167,7 @@ from the spec. QuickE2E never maps a key into a number, date or file field this 
 
 `run` and `check` first load the start page. If the assertion already holds before any step, QuickE2E
 rejects the spec with `WEAK_ASSERTION`, because an assertion that is true on page load passes without
-any work. A spec with `control` is checked on the control page instead (see [Attack mode](#attack-mode)).
+any work. A spec with `control` is checked on the control page instead (see [Attack cases](#attack-cases)).
 An `expectAbsent` text that is already on the start page fails the check with `ABSENT_ON_START`.
 
 ### Codegen
@@ -177,11 +177,13 @@ locators (`getByRole`) and the same assertions. Each input is read from an envir
 `<FLOW>_<KEY>` (for example `CHECKOUT_PLAIN_EMAIL`). A non-secret input falls back to the spec value. A
 secret input has no fallback, so the credential is never written into the file.
 
-## Attack mode
+## Attack cases
 
-The agent skill can act as a malicious user. This is the instruction it follows, word for word:
+Attacks are not a separate mode. In every session the agent skill writes happy-path cases first, then
+boundary, refusal and attack cases. When a happy path fails, the attacks on that flow wait. This is the
+attack instruction it follows, word for word:
 
-**Attack: act as a malicious user.** Think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
+**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
@@ -211,7 +213,7 @@ On TicketBay main (2026-10-04), both specs in `examples/ticketbay/attacks.mjs` p
 3/3 on `local` Shisa DE-1. The other-user's-order spec passes in 0 steps with no engine call; the code
 spec takes 2 steps.
 
-**Limits of attack mode.** One browser and one action at a time: no simultaneous double clicks, races
+**Limits of attack cases.** One browser and one action at a time: no simultaneous double clicks, races
 or multi-tab flows. No header, cookie or request-body tampering, and no network-level attacks. Test those
 with API property tests or a code-level adversarial tester. A crafted URL in `start` is in scope. Attack
 only an app you own: the full crawl runs only on localhost unless you pass `--i-own-this-data`.
@@ -384,9 +386,9 @@ roots and iframes, hidden-text false passes, a 150-link page, a safe crawl.
 
 Strong spec secrets in the suite: 0 leaks.
 
-Attack mode added two pages and five fixtures (2026-10-04): an expired code in odd casing (refused, and
+Attack cases added two pages and five fixtures (2026-10-04): an expired code in odd casing (refused, and
 refused-but-applied), another user's order by URL (refused, and leaked), and a URL that answers HTTP 500.
-`jev` 5/5 and `local` Shisa DE-1 5/5, n=3. Against the code before attack mode, four of the five fail.
+`jev` 5/5 and `local` Shisa DE-1 5/5, n=3. Against the code before this change, four of the five fail.
 
 ## Engines
 
@@ -435,7 +437,7 @@ prompt format and model licences: [`local-engine/README.md`](local-engine/README
 
 1. reads the map and your source code,
 2. lists the business rules (`rule — file:line`),
-3. invents happy-path, boundary, refusal and [attack](#attack-mode) cases,
+3. invents happy-path, boundary, refusal and [attack](#attack-cases) cases,
 4. writes the spec file and runs `check` and `run`,
 5. reports which failures are app bugs.
 
@@ -495,7 +497,7 @@ A spec file exports an array of flows (`export default [...]`).
 | `goal` | the task in plain English |
 | `inputs` | every value the run types, keyed by field label |
 | `expectUrl`, `expect`, `expectState`, `expectSeen`, `expectAbsent` | the assertions (see [Verify](#3-verify)) |
-| `control` | a path where the app says yes; the `WEAK_ASSERTION` check loads it instead of `start` (see [Attack mode](#attack-mode)) |
+| `control` | a path where the app says yes; the `WEAK_ASSERTION` check loads it instead of `start` (see [Attack cases](#attack-cases)) |
 | `kind` | a label for the run record and the output line, such as `"attack"` |
 | `redact` | CSS selectors and text patterns the engine must never see |
 | `storageState` | Playwright storage state for the browser context |

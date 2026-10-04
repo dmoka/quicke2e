@@ -1,6 +1,6 @@
 ---
 name: quicke2e
-description: Invent and run exploratory browser test cases for a web app with quicke2e. Maps the app, reads its source for business rules, writes goal-based specs with deterministic assertions, runs them with the Jev decision model, and reports findings. Attack mode acts as a malicious user (abusive values, code abuse, another user's order by URL, closed windows). Use when the user says "quicke2e", "explore my app", "find UI bugs", "attack mode", "act as a malicious user", "write browser test cases", or wants adversarial end-to-end checks without writing selectors.
+description: Invent and run exploratory browser test cases for a web app with quicke2e. Maps the app, reads its source for business rules, writes goal-based specs with deterministic assertions, runs them with the Jev decision model, and reports findings. Every session writes happy-path cases first, then boundary, refusal and attack cases (a malicious user: abusive values, code abuse, another user's order by URL, closed windows). Use when the user says "quicke2e", "explore my app", "find UI bugs", "act as a malicious user", "write browser test cases", or wants adversarial end-to-end checks without writing selectors.
 ---
 
 # quicke2e — invent the cases, let Jev drive, let code judge
@@ -32,13 +32,13 @@ List every rule as one line: `rule — file:line`.
 
 ## 3. Invent the cases
 
-For each form and each rule, write cases in four kinds:
-1. **Happy path** — the main job of the page works.
+For each form and each rule, write cases in all four kinds, every session, without being asked:
+1. **Happy path** — the main job of the page works. Always first.
 2. **Boundary** — the edge of a rule: last valid day, max quantity, code at its limit.
 3. **Refusal** — the rule must say no: expired window, sold out, wrong code, a started event, a user without the role.
-4. **Attack** — see below. When the user asks for attack mode, write mostly this kind.
+4. **Attack** — a malicious user, see below.
 
-**Attack: act as a malicious user.** Think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
+**Attack: always think like an attacker too.** Every session, without being asked, also invents attack cases: think like an attacker, a chaos engineer and a senior QA engineer. Invent the cases a scripted suite never has, within what QuickE2E can execute:
 - Abusive values typed into real fields: negative, zero and huge quantities, overlong and unicode strings, script tags, SQL-looking strings, extra spaces and odd casing on codes.
 - Discount-code abuse: a used-up code again, a second code on top of the first, an expired or disabled code in odd casing.
 - Another user's resource by URL: `start` is someone else's order, `control` is the user's own order.
@@ -51,7 +51,7 @@ Every attack asserts two things. The app refuses: the refusal text or the error 
 
 Mark each attack spec with `kind: "attack"`. Prefer the cases a scripted suite does not have. Check the existing tests first and say which rules they skip.
 
-### Limits of attack mode
+### Limits of attack cases
 
 - One browser, one action at a time: no simultaneous double clicks, no races, no multi-tab flows.
 - No header, cookie or request-body tampering, and no network-level attacks. A crafted URL in `start` is in scope.
@@ -115,6 +115,8 @@ npx quicke2e run quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.m
 
 A `WEAK_ASSERTION` means the assertion already holds on the start page: rewrite the assertion, never add `--allow-weak` to make it go away.
 
+Run the happy paths first (put them in their own file, or use `--only`). When a happy path fails, report it and hold the boundary, refusal and attack cases on that flow until it passes: on a broken flow, an attack cannot tell a refusal from a breakage.
+
 ## 6. Report
 
 For each failing spec: is it an APP bug (the rule in the source is violated) or a SPEC/TOOL problem (the run never reached the place)? Read the trace (`--trace runs/`) before you decide. The outcome tells you: `DONE_VERIFIED` = pass; `ABSENT_SEEN` = the app showed a success-only text, so it accepted the attack (record field `absentSeen`); `SERVER_ERROR` = a page answered HTTP 5xx (record field `httpStatus`): an app bug, load the URL yourself to read the error; `MAX_STEPS`/`MODEL_BLOCKED` = it got lost; a wrong final page with the success text visible = the app broke a rule.
@@ -122,5 +124,6 @@ For each failing spec: is it an APP bug (the rule in the source is violated) or 
 - **Never edit a spec to make it pass.** A red refusal or attack case is the finding.
 - For each app bug: the rule (file:line), the spec name, what happened (outcome, `absentSeen`, final URL). Suggest the lowest-level test that would catch it: a unit test on the domain rule, or an API test on the route.
 - An attack that got lost (`MAX_STEPS`, `MODEL_BLOCKED`, `NO_SPEC_VALUE`) has no verdict. Say so; do not count it as a pass or as a bug.
+- Report the happy paths first, then the boundary, refusal and attack results.
 - List the attacks you did not run because of the limits above, with the layer that should test them.
 - For a flow that must stay green, emit a Playwright spec from a passing run: `--emit e2e/generated/`.

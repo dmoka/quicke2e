@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout</title>
-<!-- ATTACK MODE: an expired code must be refused AND leave the total unchanged. ?bug=1 is the app bug:
+<!-- ATTACK CASE: an expired code must be refused AND leave the total unchanged. ?bug=1 is the app bug:
      it shows the refusal but applies the discount anyway, so expect:["This code has expired."] alone
      is a FALSE PASS. expectAbsent:["SUMMER25 25%"] catches it (outcome ABSENT_SEEN). -->
 <style>body{font-family:system-ui;padding:16px;max-width:620px}label{display:block;margin:10px 0 2px}input{padding:6px}button{margin:6px 6px 0 0;padding:6px 12px}</style></head><body><script src="/truth.js"></script>

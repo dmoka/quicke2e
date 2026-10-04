@@ -402,7 +402,7 @@ export const FIXTURES = [
     start: "/redact3.html", inputs: { nickname: "home" }, redact: [".bc"],
     goal: "Set the nickname to home and save the settings.", done: "Saved.", expectUrl: "done\\.html\\?Nick=home" }, /AB12CD34/i),
 
-  // ---- attack mode: the app must refuse, and the success state must stay absent ----
+  // ---- attack cases: the app must refuse, and the success state must stay absent ----
   attack("attack-code-refused", "A1 an expired code in odd casing is refused and the total is unchanged",
     "/attack-code.html", "pass"),
   attack("attack-code-accepted", "A1b refusal text shown, but the discount applied anyway: expect alone is a FALSE PASS",
@@ -498,7 +498,7 @@ function falsePass(id, defect, start) {
     grade({ rec }) { return { ok: !rec.passed, note: rec.passed ? `FALSE PASS (${rec.outcome}) — the page says "Payment failed"` : `correctly failed ${rec.outcome}` }; } };
 }
 
-// Attack mode (expectAbsent): an expired code typed in odd casing. The refusal text alone is not the
+// Attack case (expectAbsent): an expired code typed in odd casing. The refusal text alone is not the
 // test: the discount line must also stay absent, or the app accepted the attack (ABSENT_SEEN).
 function attack(id, defect, start, want) {
   return { id, defect, kind: "flow", want,
