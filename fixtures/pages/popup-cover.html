@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- v0.4 fixture: a date picker opens on focus and covers the Save button until Escape. The click on
+     Save is intercepted; 0.3.0 retried it until the step limit (demoqa practice form). -->
+<html><head><meta charset="utf-8"><title>Booking</title>
+<style>#cal{position:absolute;left:0;top:60px;width:420px;height:220px;background:#eef;border:1px solid #99c;z-index:10}
+form{position:relative;width:420px}#save{position:relative;margin-top:120px}</style></head><body><script src="/truth.js"></script>
+<h1>Booking</h1>
+<form onsubmit="event.preventDefault();document.getElementById('out').textContent='Saved for '+document.getElementById('d').value;">
+  <label for="d">Date of visit</label> <input id="d" name="d">
+  <div id="cal" hidden>Calendar: pick a day (press Escape to close)</div>
+  <button id="save" type="submit" data-truth="save">Save booking</button>
+</form>
+<p id="out"></p>
+<script>
+const d = document.getElementById("d"), cal = document.getElementById("cal");
+d.addEventListener("focus", () => { cal.hidden = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") cal.hidden = true; });
+</script>
+</body></html>

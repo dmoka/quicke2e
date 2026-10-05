@@ -189,10 +189,17 @@ An `expectAbsent` text that is already on the start page fails the check with `A
 
 ### Codegen
 
-`--emit <dir>` turns a passing run into `<dir>/<name>.spec.ts`: a Playwright spec with accessible-name
-locators (`getByRole`) and the same assertions. Each input is read from an environment variable named
+`--emit <dir>` turns a passing run into `<dir>/<name>.spec.ts`: a plain Playwright spec with the same
+assertions. Each locator is built and verified on the live page during the run, before the action: it
+must match exactly one element, the one the run acted on. The order of candidates: Playwright's own role
+and accessible name; that, scoped to the row or card holding the element (`getByRole("listitem").filter({
+hasText: "Sauce Labs Bike Light" })`), when several elements share the name; label, placeholder, test id;
+position. Assertions read the page with the same text function as the run, so a green replay means what a
+passing run meant. Native dialogs, Escape presses, hover and drag replay the same way, and a path
+`storageState` becomes `test.use({ storageState })`. Measured on saucedemo.com: 9 of 9 emitted specs replay. Each input is read from an environment variable named
 `<FLOW>_<KEY>` (for example `CHECKOUT_PLAIN_EMAIL`). A non-secret input falls back to the spec value. A
-secret input has no fallback, so the credential is never written into the file.
+secret input has no fallback, so the credential is never written into the file: without the variable,
+that one test is skipped with a message.
 
 ## Attack cases
 
@@ -498,6 +505,8 @@ quicke2e check <spec.mjs> [--base url]
 | `--allow-weak` | run | run a spec that failed the `WEAK_ASSERTION` check |
 | `--json` | run, check | print all records as one JSON array on the last line of stdout, including flows that never ran (`UNREACHABLE`, `WEAK_ASSERTION`); fields: [`AGENTS.md`](AGENTS.md#run-and-read-the-result) |
 | `--min-confidence` | run | below this engine confidence an action is not executed (default 0.3) |
+| `--nav-timeout` | run | page-load timeout in ms (default 30000) |
+| `--reset` | run | shell command run before every run, to restore seed data (a failing command stops that flow with `RESET_FAILED`) |
 | `--headed` / `--headless` | all | force the browser mode |
 
 </details>
@@ -522,6 +531,9 @@ A spec file exports an array of flows (`export default [...]`).
 | `maxSteps` | step limit (default 14) |
 | `neverClick` | elements the engine is never offered: case-insensitive globs over the whole label (`"Pay*"`, `"*delete*"`) or RegExps. Use it in refusal tests so a failed refusal cannot buy, pay or delete |
 | `minConfidence` | an action the engine picks below this confidence is not executed and counts as BLOCKED (default 0.3, or `--min-confidence`) |
+| `dialog` | `"accept"` (default) or `"dismiss"` for native `confirm`/`alert`/`prompt` dialogs; a prompt gets the spec value whose key its message names |
+| `navTimeout` | page-load timeout in ms (default 30000, or `--nav-timeout`) |
+| `maxTimeMs` | time budget for the run; when it runs out, the outcome is `TIMEOUT` |
 | `done` | optional plain-English end state, for the reader. The run loop does not send it to the engine |
 
 </details>
@@ -540,6 +552,8 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 | `NO_SPEC_VALUE` | the run needed a value the spec does not have |
 | `MAX_STEPS` | the step limit ran out |
 | `LOOP` | the same action ran 3 times on a page that did not change; the 4th was not executed |
+| `AUTH_REQUIRED` | the flow has a `storageState`, but the start page redirected to a sign-in page: the session is missing or expired |
+| `TIMEOUT` | the flow's `maxTimeMs` ran out |
 | `ERROR` | the run threw an error |
 
 </details>
@@ -548,7 +562,9 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 
 - **QuickE2E checks only the assertions in the spec.** A green run proves those assertions and nothing else about the app.
 - **Use the emitted Playwright spec as the CI merge gate.** A model-driven run can take a different path on the next run.
-- **Tested stacks:** the eight above plus TicketBay. Not tested: canvas apps, cross-origin iframes (Stripe Elements), closed shadow roots, native mobile.
+- **Tested stacks:** the eight above plus TicketBay, saucedemo.com (React), practicesoftwaretesting.com (Angular), demoqa.com and the-internet. Not tested: canvas apps, cross-origin iframes (Stripe Elements), closed shadow roots, native mobile.
+- **Hover and drag are offered only for recognisable patterns.** HOVER: an element whose container holds hidden text (a caption, a tooltip). DRAG: elements marked draggable or named "drag" onto drop zones named "drop". Custom drag libraries with other markup are not detected.
+- **Native dialogs are accepted by default** (`dialog: "dismiss"` flips it); a `prompt` takes the spec value whose key its message names. Block a destructive action in a refusal test with `neverClick`.
 - **The step count can vary.** Page timing can add a step. The verdict comes from code, so the same final page gives the same verdict.
 - **Page content reaches the engine unless you declare it with `redact`.** No rule guesses which page text is sensitive. An automatic "looks like a code" rule was built and measured: it broke four working flows (order numbers, versions, SKUs, a year) and still missed other code shapes.
 - **A full crawl changes data.** Use a throwaway database.

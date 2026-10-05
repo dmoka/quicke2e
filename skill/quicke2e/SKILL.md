@@ -128,7 +128,9 @@ data), declare it in the spec: `redact: [".backup-code", "#saved-cards", /recove
 (CSS selectors and text patterns). Nothing is guessed automatically. Secret spec inputs (password,
 api key, card number, token, …) are always kept out.
 
-**Data between specs.** A spec that changes data (an order, a cancelled event) changes what the next spec sees. Order the specs so they do not collide, or restore seed data before each `run --only <name>`, then re-create `auth.json`.
+**Data between specs.** A spec that changes data (an order, a cancelled event) changes what the next spec sees. Restore seed data before every run with `run --reset "<cmd>"` (for example `--reset "npm run db:seed && node login.mjs"`), or order the specs so they do not collide. A stale `auth.json` ends the run at once with `AUTH_REQUIRED`.
+
+**Dialogs, hover, drag.** Native `confirm`/`prompt` dialogs are accepted (a prompt takes the spec value whose key its message names); set `dialog: "dismiss"` to test the cancel path. Hover-only content and drag-and-drop are offered when the page uses a recognisable pattern; write the goal in those words ("hover over the avatar of user2", "drag the card onto Done").
 
 ## 5. Check, then run
 

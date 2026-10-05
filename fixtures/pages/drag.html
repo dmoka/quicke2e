@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- v0.4 fixture: drag and drop with mouse events (jQuery UI shape, no draggable attribute). -->
+<html><head><meta charset="utf-8"><title>Drag</title>
+<style>#draggable{width:80px;height:80px;background:#cde;position:absolute;left:20px;top:80px;cursor:move}
+#droppable{width:160px;height:160px;background:#eee;position:absolute;left:260px;top:60px}</style></head>
+<body><script src="/truth.js"></script><h1>Drag and drop</h1>
+<div id="draggable" data-truth="drag">Drag me</div>
+<div id="droppable"><p id="msg">Drop here</p></div>
+<script>
+const box = document.getElementById("draggable"), zone = document.getElementById("droppable");
+let drag = null;
+box.addEventListener("mousedown", (e) => { drag = { dx: e.clientX - box.offsetLeft, dy: e.clientY - box.offsetTop }; });
+document.addEventListener("mousemove", (e) => { if (drag) { box.style.left = (e.clientX - drag.dx) + "px"; box.style.top = (e.clientY - drag.dy) + "px"; } });
+document.addEventListener("mouseup", (e) => {
+  if (!drag) return; drag = null;
+  const r = zone.getBoundingClientRect();
+  if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) document.getElementById("msg").textContent = "Dropped!";
+});
+</script></body></html>

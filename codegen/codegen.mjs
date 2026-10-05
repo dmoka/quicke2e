@@ -1,4 +1,5 @@
 import { isSecretKey, scrubText } from "../src/secret.mjs";
+import { SEEN_RECORDER, SEEN_TEXT } from "../src/loop.mjs";
 // codegen: a PASSED run record -> a deterministic Playwright spec.
 //
 // Why this exists: the decision model runs on MLX, which is Apple Silicon only, so a Linux CI
@@ -22,7 +23,7 @@ const q = (s) => JSON.stringify(String(s));
 // the exploratory run did, or it is testing something else.
 const ARIA = { textbox: "textbox", password: "textbox", button: "button", link: "link",
   option: "option", combobox: "combobox", tab: "tab", checkbox: "checkbox", switch: "switch",
-  radio: "radio", menuitem: "menuitem" };
+  radio: "radio", menuitem: "menuitem", slider: "slider" };
 
 // ---------------------------------------------------------------- step pruning
 // An exploratory trace wanders. Three classes of junk, and only ONE of them is safe to drop
@@ -59,7 +60,7 @@ export function classify(steps) {
   const seen = new Set();
   for (const o of out) {
     if (o.drop) continue;
-    const k = `${o.step.op}|${o.step.label}|${o.step.url}`;
+    const k = `${o.step.op}|${o.step.locator?.code || o.step.label}|${o.step.url}`;
     if (seen.has(k)) o.candidate = "repeat of an earlier identical step -- prune only if replay still passes";
     seen.add(k);
   }
@@ -87,6 +88,10 @@ function strategyFor(s) {
   return STRATEGY.exact;                             // via "node"/"role": assume, then verify
 }
 export function locator(s, { page = "page", inputs, weakKeys = [] } = {}) {
+  // v0.4: a locator verified on the live page during the run (src/locate.mjs) wins, unless it would
+  // write a secret into the spec (the scrub changes it).
+  if (s.locator?.code && scrubText(s.locator.code, inputs, { weakKeys }) === s.locator.code)
+    return s.locator.code.replace(/^page\./, `${page}.`);
   const role = ARIA[s.role];
   const name = s.label;
   // SECURITY (audit): a label that echoes a secret spec value is matched by the text before it.
@@ -119,9 +124,13 @@ export function locator(s, { page = "page", inputs, weakKeys = [] } = {}) {
 }
 
 function actionLine(s, inputs, weakKeys) {
-  const loc = locator(s, { inputs, weakKeys });
-  if (s.op === "SELECT") return `  await page.getByRole("combobox", { name: ${q(s.control)}, exact: true }).selectOption({ label: ${q(s.option)} });`;
+  const loc = s.op === "HOVER" || s.op === "DRAG" ? null : locator(s, { inputs, weakKeys });
+  if (s.op === "SELECT") return `  await ${s.locator?.code || `page.getByRole("combobox", { name: ${q(s.control)}, exact: true })`}.selectOption({ label: ${q(s.option)} });`;
   // audit: `INPUTS.["discount code"]` is a SyntaxError -- bracket access has no dot.
+  // v0.4: hover and drag replay only from verified locators (their snapshot role has no ARIA equivalent)
+  if (s.op === "HOVER") return s.locator?.code ? `  await ${s.locator.code}.hover();` : `  // HOVER "${s.label}": no verified locator recorded; re-run with --emit`;
+  if (s.op === "DRAG") return s.locator?.code && s.targetLocator?.code ? `  await ${s.locator.code}.dragTo(${s.targetLocator.code});`
+    : `  // DRAG "${s.label}": no verified locator recorded; re-run with --emit`;
   if (s.op === "TYPE_TEXT") return `  await ${loc}.fill(${IDENT.test(s.inputKey) ? `INPUTS.${s.inputKey}` : `INPUTS[${q(s.inputKey)}]`});`;
   return `  await ${loc}.click();`;
 }
@@ -139,12 +148,18 @@ function assertions(flow, waitMs) {
   const t = waitMs ? `, { timeout: ${waitMs} }` : "";
   if (flow.expectUrl)                                   // loop.mjs:206 new RegExp(...).test(url)
     out.push(`  await expect(page).toHaveURL(new RegExp(${q(flow.expectUrl)})${t});`);
-  for (const w of flow.expectSeen || [])                // transient text (a toast): poll for it
-    out.push(`  await expect(page.getByText(${q(w)}).first()).toBeVisible(${t ? `{ timeout: ${waitMs} }` : ""});`);
-  for (const w of flow.expect || [])                    // loop.mjs:208-212 innerText substring,
-    out.push(`  await expect(page.locator("body")).toContainText(${q(w)}${t});`);  // both sides normalised
-  for (const w of flow.expectAbsent || [])              // loop.mjs absentSeen(): after the positive checks, so the
-    out.push(`  await expect(page.locator("body")).not.toContainText(${q(w)}, { useInnerText: true });`);  // page has settled; innerText skips hidden text
+  // v0.4: transient text (a toast) is read from the recorder installed before the first page load,
+  // the same one the run used. Polling for a visible element missed a 300 ms toast 3/3 (new-user test).
+  // v0.4: `expect`, `expectSeen` and `expectAbsent` read the page with the SAME function the run
+  // used (src/seen-text.js, whitespace collapsed). body.toContainText joins elements differently:
+  // "$7.99 Add to cart Sauce Labs Bike Light" passed in the run and failed on replay (saucedemo).
+  const nrm = (x) => String(x).replace(/\s+/g, " ").trim();
+  for (const w of flow.expectSeen || [])
+    out.push(`  await expect.poll(async () => (await page.evaluate(() => (window.__jevSeen || []).join(" "))) + " " + (await seenText(page))${t}).toContain(${q(nrm(w))});`);
+  for (const w of flow.expect || [])
+    out.push(`  await expect.poll(() => seenText(page)${t}).toContain(${q(nrm(w))});`);
+  for (const w of flow.expectAbsent || [])              // after the positive checks, so the page has settled
+    out.push(`  expect(await seenText(page)).not.toContain(${q(nrm(w))});`);
   for (const w of flow.expectState || []) {             // loop.mjs:192-202 stateOk()
     const role = ARIA[w.role] || w.role;
     const loc = `page.getByRole(${q(role)}, { name: ${q(w.name)}, exact: true })`;
@@ -153,9 +168,10 @@ function assertions(flow, waitMs) {
       // (readable as the element's value); a <button role=combobox> reports its rendered text.
       // `tag` on the recorded control says which. Default to text, because that is the Radix
       // case and the one the substring assertion got wrong (README 2026-09-22).
-      out.push(w.tag === "select" || w.tag === "input"
-        ? `  await expect(${loc}).toHaveValue(new RegExp(${q(escapeRe(w.value))}));`
-        : `  await expect(${loc}).toContainText(${q(w.value)});`);
+      // v0.4: read the CHOSEN value. A native <select>'s text contains every option, so a
+      // toContainText on it passed for the wrong choice (saucedemo sort, new-user test).
+      out.push(`  await expect.poll(() => ${loc}.evaluate((el) => el.tagName === "SELECT" ? (el.selectedOptions[0]?.label ?? "")`
+        + ` : "value" in el && el.tagName === "INPUT" ? el.value : el.innerText)).toContain(${q(w.value)});`);
     }
     if (w.checked != null)  out.push(`  await expect(${loc})${w.checked ? "" : ".not"}.toBeChecked();`);
     if (w.selected != null) out.push(`  await expect(${loc}).toHaveAttribute("aria-selected", ${q(String(w.selected))});`);
@@ -185,18 +201,35 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
   lines.push(`import { test, expect } from "@playwright/test";`);
   lines.push(``);
   lines.push(`const BASE = process.env.APP_BASE ?? ${q(rec.base)};`);
-  if (Object.keys(flow.inputs || {}).some(isSecretKey))
-    lines.push(`const missing = (v) => { throw new Error(\`set \${v}: secret spec values are read from the environment only\`); };`);
+  // the text a user sees, exactly as the exploratory run read it (src/seen-text.js)
+  if ((flow.expect?.length || flow.expectSeen?.length || flow.expectAbsent?.length))
+    lines.push(`const SEEN_TEXT = ${q(SEEN_TEXT)};`,
+      `const seenText = async (page) => String(await page.evaluate(\`(\${SEEN_TEXT})()\`)).replace(/\\s+/g, " ").trim();`);
+  const secretEnvs = Object.keys(flow.inputs || {}).filter(isSecretKey).map((k) => envName(flow.name, k));
   lines.push(`const INPUTS = {`);
   for (const [k, v] of Object.entries(flow.inputs || {}))
     // SECURITY (audit): a secret-looking key gets NO literal default -- the spec reads it from the
     // environment only, so a credential is never written into a generated file.
     lines.push(isSecretKey(k)
-      ? `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)} ?? missing(${q(envName(flow.name, k))}),`
+      ? `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)},`
       : `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)} ?? ${q(v)},`);
   lines.push(`};`);
   lines.push(``);
+  // v0.4: the run's login travels with the spec (a path only; an inline state may hold session cookies).
+  if (typeof flow.storageState === "string") lines.push(`test.use({ storageState: ${q(flow.storageState)} });`, ``);
+  else if (flow.storageState) lines.push(`// This flow ran with an inline storageState: add test.use({ storageState: "<file>" }) for the login.`, ``);
   lines.push(`test(${q(title)}, async ({ page }) => {`);
+  // v0.4: a missing secret skips THIS test only (it used to throw at import and stop every test in the file).
+  for (const e of secretEnvs) lines.push(`  test.skip(!process.env.${e}, ${q(`set ${e}: secret spec values are read from the environment only`)});`);
+  if (flow.expectSeen?.length) lines.push(`  await page.addInitScript(${q(SEEN_RECORDER)});`);
+  // v0.4: the run accepted (or dismissed) native dialogs; the replay must do the same, not Playwright's dismiss.
+  if (rec.dialogs?.length) {
+    const promptKey = rec.dialogs.find((d) => d.inputKey)?.inputKey;
+    const val = promptKey ? (IDENT.test(promptKey) ? `INPUTS.${promptKey}` : `INPUTS[${q(promptKey)}]`) : "undefined";
+    lines.push(flow.dialog === "dismiss"
+      ? `  page.on("dialog", (d) => (d.type() === "beforeunload" ? d.accept() : d.dismiss()));`
+      : `  page.on("dialog", (d) => d.accept(d.type() === "prompt" ? ${val} : undefined));`);
+  }
   lines.push(`  await page.goto(BASE + ${q(flow.start || "/")});`);
   // MAP (v1): the run was routed to its target page before the step loop. Replay the same walk.
   for (const h of rec.route?.hops || []) {
@@ -204,7 +237,7 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
     else if (h.ok) lines.push(`  await page.getByRole(${q(h.role)}, { name: ${q(h.label)}, exact: true }).first().click();`);
   }
 
-  let lastUrl = null;
+  let lastUrl = null, prevOp = null;
   for (const c of kept) {
     const s = c.step;
     // A url change between two kept steps is a navigation the exploratory run observed. Asserting
@@ -213,7 +246,16 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
       lines.push(`  await expect(page).toHaveURL(new RegExp(${q(escapeRe(new URL(s.url).pathname))}));`);
     lastUrl = s.url;
     if (c.candidate) lines.push(`  // kept: ${c.candidate}`);
+    // v0.4: a click right after typing often submits a form the app is still filling or validating
+    // (toolshop: a postal-code lookup filled State after the replay clicked Proceed). Let the network
+    // settle first, bounded so a polling app cannot hang the test.
+    if (s.op === "CLICK" && prevOp && prevOp !== "CLICK")
+      lines.push(`  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});`);
+    prevOp = s.op;
+    // v0.4: the run needed Escape to close a popup over this target (act() "+esc"); so does the replay
+    if (String(s.via || "").endsWith("+esc")) lines.push(`  await page.keyboard.press("Escape");`);
     lines.push(actionLine(s, flow.inputs, rec.weakEchoed || []));
+    if (s.closedPopup) lines.push(`  await page.keyboard.press("Tab");   // the run closed a popup this field opened`);
   }
   lines.push(``);
   lines.push(`  // ---- the assertion. This, not the steps, is the test.`);

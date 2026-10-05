@@ -53,6 +53,9 @@ Flow fields:
 | `maxSteps` | no | step limit, default 14 |
 | `neverClick` | no | elements never offered to the engine: case-insensitive globs over the whole label (`"Pay*"`) or `RegExp`s |
 | `minConfidence` | no | engine picks below this confidence are not executed (default 0.3) |
+| `dialog` | no | `"accept"` (default) or `"dismiss"` for native dialogs; a `prompt` gets the spec value whose key its message names |
+| `navTimeout` | no | page-load timeout in ms (default 30000) |
+| `maxTimeMs` | no | time budget; outcome `TIMEOUT` when it runs out |
 
 All given assertions must hold at the same time. The run checks them on every page snapshot and
 **stops as soon as they all hold**, so the assertions must describe the state after the last action.
@@ -145,10 +148,12 @@ repeats each flow.
 |---|---|---|
 | `flow` | string | the spec's `name` |
 | `passed` | boolean | the final assertion check: the result to trust |
-| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action, or only picks under `minConfidence`, three times on an unchanged page), `LOOP` (the same action ran 3 times on an unchanged page), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`). Flows that never ran: `UNREACHABLE`, `WEAK_ASSERTION`, `ABSENT_ON_START` (and `OK` from `check`) |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action, or only picks under `minConfidence`, three times on an unchanged page), `LOOP` (the same action ran 3 times on an unchanged page), `AUTH_REQUIRED` (the flow's `storageState` session is missing or expired: the start page redirected to sign-in), `TIMEOUT` (`maxTimeMs` ran out), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`). Flows that never ran: `UNREACHABLE`, `WEAK_ASSERTION`, `ABSENT_ON_START` (and `OK` from `check`) |
 | `assertions` | array | one entry per assertion: `{ kind, value, held, actual? }` on the final page. Read this first on a failure |
 | `heldBack` | array | on a failure: submits that were hidden because a spec field was unset: `{ label, waitingFor, key }` |
 | `loop`, `lowConfidence`, `failedActions`, `emptyRequired` | | on a failure: the repeated action, the best pick under `minConfidence`, actions that threw, required fields still empty |
+| `dialogs` | array | native dialogs the run handled: `{ type, message, action, inputKey? }` |
+| `slowSteps` | array | actions that took over 3 s from decision to a settled page: `{ n, op, label, ms }` (also on a pass) |
 | `error` | string or null | the error message when `outcome` is `ERROR` |
 | `absentSeen` | string | only with `ABSENT_SEEN`: the `expectAbsent` text that appeared |
 | `httpStatus` | number | only with `SERVER_ERROR`: the 5xx status |

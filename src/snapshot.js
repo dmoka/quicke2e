@@ -60,7 +60,14 @@
     if (!el.matches(OVERLAY_ROLE) || !hasBox(el)) return false;
     return EXPANDED_OUTSIDE(el);
   });
-  const inPopup = (el) => popupRoots.some((p) => p.contains(el));
+  // v0.4: an autocomplete's suggestion list usually sits INSIDE the form, not at the body level, so it
+  // never counted as an open popup and its options were mixed with every other field (demoqa Subjects:
+  // the run clicked "Sports" under the open menu). A visible listbox counts as open while a combobox on
+  // the page reports aria-expanded="true"; an always-visible list does not.
+  const comboOpen = [...document.querySelectorAll('[role=combobox][aria-expanded="true"], input[aria-expanded="true"]')].length > 0;
+  const openLists = comboOpen ? [...document.querySelectorAll("[role=listbox]")].filter((l) => shown(l) && hasBox(l)
+    && l.querySelector("[role=option]")) : [];
+  const inPopup = (el) => popupRoots.some((p) => p.contains(el)) || openLists.some((l) => l.contains(el));
 
   // 2. root-scoped lookups
   // 8. text through <slot>s (flat tree), used wherever a shadow-root element's innerText is read
@@ -76,6 +83,24 @@
   const textOf = (el) => strip(el.getRootNode() instanceof ShadowRoot ? flat(el) : el.innerText);
   const byId = (el, id) => { const r = el.getRootNode(); return (r.getElementById ? r.getElementById(id) : null) || el.ownerDocument.getElementById(id); };
   const labelFor = (el) => el.id ? el.getRootNode().querySelector?.(`label[for="${CSS.escape(el.id)}"]`) : null;
+  // The caption of an unlabelled control: text that comes BEFORE it in the same container (an earlier
+  // sibling of the control or of one of its first 3 ancestors). Not an ancestor's whole text: on
+  // demoqa that gave the page heading "Slider" to the readout box next to the slider.
+  const nearbyText = (el) => {
+    for (let n = el, d = 0; n && d < 3; n = n.parentElement, d++) {
+      for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+        if (/^H[1-3]$/.test(p.tagName)) return "";
+        // Another control (or a <label>) comes first: the text before it is ITS caption, never ours
+        // (fixtures/sec-contenteditable: an unlabelled box took the "Site name" input's label).
+        if (p.matches("input, select, textarea, button, label, [contenteditable=true]")
+            || p.querySelector("input, select, textarea, button, label, [contenteditable=true]")) return "";
+        const line = String(p.innerText || "").split("\n").map(strip).find((t) => t.length >= 2 && t.length <= 40);
+        if (line) return line;
+        if (strip(p.innerText)) break;
+      }
+    }
+    return "";
+  };
   const accName = (el) => {
     const role = el.getAttribute("role");
     let l = strip(el.getAttribute("aria-label"));
@@ -91,9 +116,14 @@
     // SECURITY (audit S1): an editable element's text is its CONTENT, never its name.
     if (!l && !valueBearing && !el.isContentEditable && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) l = textOf(el);
     if (!l) l = strip(el.getAttribute("title"));
+    // v0.4: the visible caption next to the control comes before its name/id attribute. A react-select
+    // input's id is "react-select-3-input"; the engine was offered that and clicked the wrong
+    // combobox 11x (demoqa). The caption is the first short text line of a close ancestor.
+    if (!l) l = nearbyText(el);
     if (!l) {
       const n = el.getAttribute("name") || el.getAttribute("id") || el.getAttribute("type") || "";
-      if (!/^[_:]?[rR][_:]|^[_:]r|^_R_/.test(n)) l = strip(n);
+      const generated = /\d/.test(n) && /[-_]/.test(n);   // react-select-3-input, mui-12, :r5:
+      if (!generated && !/^[_:]?[rR][_:]|^[_:]r|^_R_/.test(n)) l = strip(n);
     }
     return l.slice(0, 80) || "(unlabeled)";
   };
@@ -130,6 +160,7 @@
       if (t === "radio") return "radio";
       if (t === "submit" || t === "button") return "button";
       if (t === "password") return "password";
+      if (t === "range") return "slider";   // v0.4: its real ARIA role; a readout textbox next to it is a different field
       return "textbox";
     }
     return tag;
@@ -174,7 +205,8 @@
   const gen = Math.random().toString(36).slice(2, 6);
   let n = 0;
   const stampedNow = new WeakSet();
-  const stamp = (el) => { const node = `${gen}n${n++}`; el.setAttribute("data-jev-node", node); stampedNow.add(el); return node; };
+  const nodeEls = new Map();
+  const stamp = (el) => { const node = `${gen}n${n++}`; el.setAttribute("data-jev-node", node); stampedNow.add(el); nodeEls.set(node, el); return node; };
   const proxied = new WeakSet();
 
   for (const el of found) {
@@ -239,6 +271,68 @@
       const node = stamp(el);
       actions.push({ id: `click:${node}`, kind: "click", node, label: txt, role: "option", tag: el.tagName.toLowerCase(), popup: true, value: "" });
     }
+  }
+
+  // v0.4 HOVER: an element whose container holds HIDDEN text (a figure caption, a tooltip) reveals it
+  // on hover. Offered only for that pattern; the label carries the hidden text so the engine can tell
+  // the avatars apart (the-internet /hovers was BLOCKED from step 1 in 0.3.0).
+  const hidden = (el) => { const cs = getComputedStyle(el); return cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0; };
+  let hovers = 0;
+  for (const img of document.querySelectorAll("img, figure, [aria-describedby]")) {
+    if (hovers >= 12 || !visible(img) || stampedNow.has(img)) continue;
+    const box = img.closest("figure, li, div") || img.parentElement;
+    if (!box) continue;
+    const tip = [...box.querySelectorAll("*")].find((e) => e !== img && !e.contains(img) && hidden(e) && strip(e.textContent).length >= 2);
+    if (!tip) continue;
+    const node = stamp(img);
+    hovers++;
+    const base = strip(img.getAttribute("alt") || accName(img));
+    actions.push({ id: `hover:${node}`, kind: "hover", node, label: `${base || "element"} · ${strip(tip.textContent).slice(0, 40)}`, role: "img", tag: img.tagName.toLowerCase(), value: "" });
+  }
+
+  // v0.4 DRAG: source -> target pairs, only between elements that look draggable and drop zones.
+  const dragSrc = [...document.querySelectorAll("[draggable=true], [id*=drag i], [class*=draggable i]")]
+    .filter((e) => visible(e) && !/drop/i.test(e.id + " " + e.className)).slice(0, 3);
+  // Tabs, links and buttons are never drop zones (demoqa: the tab "droppableExample-tab-simple" was
+  // picked over the real #droppable box).
+  const dropDst = [...document.querySelectorAll("[id*=drop i], [class*=droppable i], [class*=dropzone i], [class*=drop-box i]")]
+    .filter((e) => visible(e) && !e.matches("a, button, [role=tab], [role=button], [role=link], [role=tablist], nav *")
+      && !dragSrc.some((d) => d === e || e.contains(d) || d.contains(e)))
+    .filter((e, i, all) => !all.some((o) => o !== e && e.contains(o)))   // innermost zone only
+    .slice(0, 4);
+  for (const src of dragSrc) for (const dst of dropDst) {
+    const sNode = src.getAttribute("data-jev-node") || stamp(src), dNode = dst.getAttribute("data-jev-node") || stamp(dst);
+    const name = (e) => strip(accName(e)).slice(0, 30) || e.id || e.tagName.toLowerCase();
+    actions.push({ id: `drag:${sNode}>${dNode}`, kind: "drag", node: sNode, targetNode: dNode,
+      label: `${name(src)} -> ${name(dst)}`, role: "drag", tag: src.tagName.toLowerCase(), value: "" });
+  }
+
+  // v0.4: CONTEXT FOR IDENTICAL NAMES. Six "Add to cart" buttons are six identical options for the
+  // engine, and their trace labels cannot say which product was added (saucedemo). Each clickable that
+  // shares its role+name gets the first text line of the largest ancestor holding only it (the card):
+  // "Add to cart · Sauce Labs Backpack". The original name stays in baseLabel for role lookups.
+  const groups = new Map();
+  for (const a of actions) {
+    if (a.kind !== "click" || !["button", "link", "menuitem", "tab"].includes(a.role)) continue;
+    const k = a.role + "|" + a.label;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(a);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 2 || list.length > 40) continue;
+    const els = list.map((a) => nodeEls.get(a.node));
+    if (els.some((e) => !e)) continue;
+    const ctx = els.map((el) => {
+      let card = null;
+      for (let p = el.parentElement, d = 0; p && d < 8; p = p.parentElement, d++) {
+        if (els.some((o) => o !== el && p.contains(o))) break;
+        card = p;
+      }
+      if (!card) return "";
+      return String(card.innerText || "").split("\n").map(strip).find((t) => t && t !== list[0].label && t.length >= 2 && t.length <= 50) || "";
+    });
+    if (ctx.some((c) => !c) || new Set(ctx).size !== ctx.length) continue;
+    list.forEach((a, i) => { a.baseLabel = a.label; a.label = `${a.label} · ${ctx[i]}`; });
   }
 
   const text = strip((document.body && document.body.innerText) || "").slice(0, 1200);

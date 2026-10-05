@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- v0.4 fixture: native confirm() and prompt(). 0.3.0 dismissed both (Playwright's default). -->
+<html><head><meta charset="utf-8"><title>Drafts</title></head><body><script src="/truth.js"></script>
+<h1>Drafts</h1>
+<p>Draft: <span id="name">Untitled</span></p>
+<button id="rename" data-truth="rename">Rename draft</button>
+<button id="del" data-truth="delete">Delete draft</button>
+<p id="out"></p>
+<script>
+document.getElementById("rename").onclick = () => {
+  const v = prompt("New draft name?");
+  if (v) { document.getElementById("name").textContent = v; document.getElementById("out").textContent = "Renamed to " + v; }
+};
+document.getElementById("del").onclick = () => {
+  document.getElementById("out").textContent = confirm("Delete the draft?") ? "Draft deleted" : "Draft kept";
+};
+</script>
+</body></html>

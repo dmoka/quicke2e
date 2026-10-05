@@ -23,6 +23,8 @@ const DEFAULT_BASE = process.env.APP_BASE || "http://localhost:3000";
 // same action on an unchanged page this many times ends the run with outcome LOOP.
 const MIN_CONFIDENCE = 0.3;
 const LOOP_LIMIT = 4;
+const MAX_FREE_WAITS = 10;   // v0.4: WAITs that do not count toward maxSteps
+const SLOW_MS = 3000;        // v0.4: an action slower than this is flagged in the record and output
 // neverClick: strings are case-insensitive globs over the WHOLE label ("Pay*", "*delete*"); RegExps test as-is.
 function neverMatcher(list) {
   if (!list?.length) return null;
@@ -118,8 +120,14 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
                  keyOf = (label, role) => keyFor(label, inputs, role), goal = null, typedKeys = new Map(), never = null) {
   let els = [], targets = {}, criteria = {};
   const idx = {};
-  const ops = { click: "CLICK", fill: "TYPE_TEXT", select: "SELECT" };
+  const ops = { click: "CLICK", fill: "TYPE_TEXT", select: "SELECT", hover: "HOVER", drag: "DRAG" };
   const raw = [];
+  // v0.4: a spec key that EXACTLY names one field is that field's key only; fields whose label merely
+  // contains the word ("sliderValue" for key "slider") are not offered for it (demoqa: the engine typed
+  // 75 into the readout box next to the slider at 0.57).
+  const lc = (t) => norm(t).toLowerCase();
+  const exactKeys = new Set(Object.keys(inputs || {}).filter((k) =>
+    snap.actions.some((x) => (x.kind === "fill" || (x.kind === "click" && x.role === "combobox" && x.tag === "input")) && lc(x.label) === lc(k))));
   for (const a of snap.actions) {
     const op = ops[a.kind]; if (!op) continue;
     // FIX (v1): native <select>. Each OPTION is its own action, keyed by option -- keying by node
@@ -141,6 +149,7 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     if (op === "TYPE_TEXT") {
       const k = keyOf(a.label, a.role);
       if (k === null) continue;                          // no spec value: not this test's field
+      if (exactKeys.has(k) && lc(a.label) !== lc(k)) continue;   // v0.4: another field IS this key
       // One spec key fills ONE field per page (audit B1 / fixtures/ambiguous.html): once "name" went
       // into one of First/Middle/Last name, the other two are not this key's fields. A re-fill of
       // the SAME field after a reload (TicketBay D1) is still allowed.
@@ -159,12 +168,22 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     // FIX (2026-09-22): "password" was missing. snapshot.js:87 gives a password input role
     // "password", not "textbox", so this guard never covered it -- and on the rename fixture the
     // model duly clicked the password field, three trials out of three.
-    if (op === "CLICK" && (a.role === "textbox" || a.role === "password")) continue;
+    if (op === "CLICK" && (a.role === "textbox" || a.role === "password" || a.role === "slider")) continue;   // v0.4: a click on a slider sets a random value
     // v0.3: a flow's `neverClick` patterns. The element is never offered, so the engine cannot pick it
     // (a refusal test once paid: the browser blocked the form, then "Pay" was clicked at 0.22).
     if (op === "CLICK" && never && never(a.label)) continue;
-    if (!(a.node in idx)) { idx[a.node] = raw.length; raw.push({ a, ops: [] }); }
-    if (!raw[idx[a.node]].ops.includes(op)) raw[idx[a.node]].ops.push(op);
+    const rowKey = a.kind === "drag" ? a.id : a.node;   // v0.4: drag pairs share a source node; keep each pair
+    if (!(rowKey in idx)) { idx[rowKey] = raw.length; raw.push({ a, ops: [] }); }
+    if (!raw[idx[rowKey]].ops.includes(op)) raw[idx[rowKey]].ops.push(op);
+    // v0.4 AUTOCOMPLETE: a text input with role combobox (react-select, MUI Autocomplete) was only ever
+    // offered as CLICK, so a spec value could not reach it (demoqa Subjects: 24 identical clicks). When
+    // the spec has a key for it, it can also be typed into -- once: the input empties itself after an
+    // option is picked, so "empty again" must not mean "type again".
+    if (op === "CLICK" && a.role === "combobox" && a.tag === "input" && inputs) {
+      const k = keyOf(a.label, "combobox");
+      if (k !== null && !filled.has(fillKey(snap.url, a)) && !raw[idx[rowKey]].ops.includes("TYPE_TEXT"))
+        raw[idx[rowKey]].ops.push("TYPE_TEXT");
+    }
   }
   // FIX (v1): hold back a form's SUBMIT while a field the spec names in that form is still unset.
   // Measured on fixtures/select.html: the model typed Team, then chose "Save subscription" (0.61)
@@ -489,11 +508,11 @@ async function checkGoal(page, flow, snap) {
 // (Radix/shadcn selects, menus, dialogs). Resolve semantically at click time instead.
 const ARIA = { textbox: "textbox", password: "textbox", button: "button", link: "link",
   option: "option", combobox: "combobox", tab: "tab", checkbox: "checkbox", switch: "switch",
-  radio: "radio", menuitem: "menuitem" };
+  radio: "radio", menuitem: "menuitem", slider: "slider" };
 // BAKEOFF: the snapshot stamps inside open shadow roots (Playwright CSS pierces them) and
 // same-origin iframes (it does not), so the stamp is looked up in every frame, then the role chain.
 async function byRole(scope, action, fn) {
-  const role = ARIA[action.role], name = (action.label || "").trim();
+  const role = ARIA[action.role], name = (action.baseLabel || action.label || "").trim();   // v0.4: context suffix is ours, not the page's
   if (role && name) {
     try { await fn(scope.getByRole(role, { name, exact: true }).first(), 1500); return "role"; } catch {}
     try { await fn(scope.getByRole(role, { name }).first(), 1200); return "role~"; } catch {}
@@ -503,7 +522,17 @@ async function byRole(scope, action, fn) {
   }
   throw new Error("unresolvable");
 }
+// v0.4: an action that fails on every strategy is usually blocked by an open popup (a date picker
+// left open over the Save button: 14-24 failed clicks on demoqa). Press Escape once and retry.
 async function act(page, action, fn) {
+  try { return await actOnce(page, action, fn); }
+  catch (e) {
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(150);
+    return (await actOnce(page, action, fn)) + "+esc";
+  }
+}
+async function actOnce(page, action, fn) {
   for (const f of page.frames()) {
     const byNode = f.locator(`[data-jev-node="${action.node}"]`);
     if (!(await byNode.count().catch(() => 0))) continue;
@@ -516,7 +545,7 @@ async function act(page, action, fn) {
 
 export async function runOnce({ flow, engine = "local", budget = 30, browser: shared, trace,
                                 base, context: ctxOpts, map, route: routeMode = "click", video,
-                                minConfidence: minConfArg } = {}) {
+                                minConfidence: minConfArg, locate = false, navTimeout } = {}) {
   base = (flow.base || base || DEFAULT_BASE).replace(/\/$/, "");
   const t0 = performance.now();
   const browser = shared || await chromium.launch({ headless: true });
@@ -564,9 +593,33 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   // v0.3 LOOP DETECTION: the same action on an unchanged page, again and again, is not progress
   // (measured: 8x the same field, 11x the wrong combobox, 24x an autocomplete). Stop and name it.
   let loopKey = null, loopSig = null, loopN = 0, loopRec = null;
+  // v0.4 NATIVE DIALOGS: without a handler Playwright dismisses every dialog, so "Delete? OK" could
+  // never be confirmed and a prompt never got text (demoqa, the-internet). Accept by default
+  // (flow.dialog: "dismiss" flips it); a prompt's text comes from the spec key its message names.
+  const dialogs = [];
+  page.on("dialog", async (dlg) => {
+    const msg = scrubText(dlg.message().slice(0, 120), flow.inputs);
+    const action = flow.dialog === "dismiss" && dlg.type() !== "beforeunload" ? "dismiss" : "accept";
+    let key = null;
+    if (dlg.type() === "prompt" && action === "accept") key = keyFor(dlg.message(), flow.inputs, "textbox");
+    try { if (action === "accept") await dlg.accept(key !== null ? String(flow.inputs[key]) : undefined); else await dlg.dismiss(); } catch {}
+    dialogs.push({ type: dlg.type(), message: msg, action, ...(key !== null ? { inputKey: key } : {}) });
+    history.push(`${dlg.type()} "${msg.slice(0, 60)}" ${action}ed${key !== null ? " with " + key : ""}`);
+  });
 
   try {
+    // v0.4: a slow site needs more than Playwright's 30 s (the-internet's assets stalled ~29 s).
+    const nav = flow.navTimeout ?? navTimeout;
+    if (nav) page.setDefaultNavigationTimeout(nav);
     await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" });
+    // v0.4 AUTH: a flow that brings a login (storageState) but lands on a sign-in page has a missing or
+    // expired session. Stop now with a reason; the skill test burned 17 runs' steps on the sign-in page.
+    const startPath = new URL(base + (flow.start || "/")).pathname;
+    if (flow.storageState && /(sign[-_]?in|log[-_]?in|auth)/i.test(new URL(page.url()).pathname) && !/(sign[-_]?in|log[-_]?in|auth)/i.test(startPath)) {
+      outcome = "AUTH_REQUIRED";
+      error = `the start page redirected to ${new URL(page.url()).pathname}: the storageState is missing or expired; log in again and save it`;
+      throw Object.assign(new Error(error), { authRequired: true });
+    }
     // MAP (v1): with a discovered map, Jev first picks the page where the work begins and code
     // walks there. The step loop below then only makes local choices. See src/route.mjs.
     if (map && routeMode) {
@@ -589,7 +642,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
       routeRec.ms = Math.round(performance.now() - t0);
     }
+    let freeWaits = 0;
     for (let i = 0; i < (flow.maxSteps || 14); i++) {
+      // v0.4 time budget per flow
+      if (flow.maxTimeMs && performance.now() - t0 > flow.maxTimeMs) { outcome = "TIMEOUT"; break; }
       let snap;
       const at = Math.round(performance.now() - t0);
       await settle(page);
@@ -778,6 +834,17 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
 
       const before = page.url();
+      // v0.4: a locator verified on the live page, for --emit (src/locate.mjs). Before the action:
+      // after a click the element is often gone.
+      if (locate && action) {
+        const { verifiedLocator } = await import("./locate.mjs");
+        const loc = await verifiedLocator(page, `[data-jev-node="${op === "SELECT" ? action.selectNode : action.node}"]`);
+        if (loc) step.locator = loc;
+        if (action.targetNode) {
+          const tl = await verifiedLocator(page, `[data-jev-node="${action.targetNode}"]`);
+          if (tl) step.targetLocator = tl;
+        }
+      }
       if (video && action) {
         const b = await page.locator(`[data-jev-node="${op === "SELECT" ? action.selectNode : action.node}"]`).first()
           .boundingBox({ timeout: 300 }).catch(() => null);
@@ -799,12 +866,32 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         if (step.inputKey) typedKeys.set(`${new URL(snap.url).pathname}|${step.inputKey}`, action.label);
         if (step.inputKey && weak.some(([k]) => k === step.inputKey)) weakTyped.add(step.inputKey);
         history.push(`typed ${action.label}`);
+        // v0.4: typing into a date field opens a calendar that stays open and covers later fields
+        // (demoqa practice form: every later click failed). After typing into a plain field (not an
+        // autocomplete, whose menu is the point), close such a popup the way a user does: Tab.
+        if (action.role !== "combobox") {
+          const popupOpen = await page.evaluate(() => [...document.querySelectorAll(
+            "[class*=datepicker i], [class*=calendar i], [class*=popper i], [role=dialog][aria-modal=true], [role=grid]")]
+            .some((e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e);
+              return r.width > 40 && r.height > 40 && cs.visibility !== "hidden" && cs.display !== "none"; })).catch(() => false);
+          if (popupOpen) { await page.keyboard.press("Tab").catch(() => {}); step.closedPopup = true; }
+        }
       } else if (op === "SELECT") {
         try { step.via = await act(page, { ...action, node: action.selectNode, label: action.selectLabel, role: "combobox" },
           (loc, t) => loc.selectOption({ label: action.optionLabel }, { timeout: t })); }
         catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
         step.option = action.optionLabel; step.control = action.selectLabel;
         history.push(`selected ${action.label}`);
+      } else if (op === "HOVER" || op === "DRAG") {
+        // v0.4: hover reveals hidden text; drag moves a source onto a target (Playwright mouse moves,
+        // which both HTML5 drag-and-drop and mouse-event libraries such as jQuery UI receive).
+        try {
+          const src = page.locator(`[data-jev-node="${action.node}"]`).first();
+          if (op === "HOVER") { await src.hover({ timeout: 1500 }); step.via = "node"; }
+          else { await src.dragTo(page.locator(`[data-jev-node="${action.targetNode}"]`).first(), { timeout: 3000 }); step.via = "node"; }
+        } catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
+        history.push(`${op === "HOVER" ? "hovered" : "dragged"} ${action.label}`);
+        await page.waitForTimeout(200);
       } else if (op === "CLICK") {
         try { step.via = await act(page, action, (loc, t) => loc.click({ timeout: t })); }
         catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
@@ -827,10 +914,12 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       if (op !== "TYPE_TEXT") await page.waitForFunction(READY, null, { timeout: 4000, polling: 50 }).catch(() => {});
       step.wallAt = Math.round(performance.now() - t0);
       steps.push(step);
+      // v0.4: waiting for a slow page is not a step toward the goal (dynamic loading needed maxSteps 25)
+      if (op === "WAIT" && freeWaits < MAX_FREE_WAITS) { freeWaits++; i--; }
 
     }
     if (outcome === "UNKNOWN") outcome = "MAX_STEPS";
-  } catch (e) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; }
+  } catch (e) { if (!e.authRequired) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; } }
 
   const tLoopEnd = performance.now() - t0;
   if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
@@ -856,6 +945,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     doneRejects, wallMs: Math.round(performance.now() - t0),
     ...(video ? { video: { file: videoFile, at: videoAt, size } } : {}),
     assertions,
+    ...(dialogs.length ? { dialogs } : {}),
+    // v0.4: actions that took over SLOW_MS from decision to settled page (performance_glitch_user: 5.4 s)
+    ...(() => { const slow = steps.filter((x) => x.wallAt != null && x.decidedAt != null && x.wallAt - x.decidedAt > SLOW_MS)
+      .map((x) => ({ n: x.n, op: x.op, label: x.label, ms: x.wallAt - x.decidedAt })); return slow.length ? { slowSteps: slow } : {}; })(),
     ...(!passed ? {
       ...(loopRec ? { loop: loopRec } : {}),
       ...(lastHeldBack?.length ? { heldBack: lastHeldBack } : {}),
@@ -876,5 +969,6 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   return rec;
 }
 
+export { SEEN_RECORDER };
 export { compact, redactGoal, stateOk, chromium, SNAPSHOT, SEEN_TEXT, settle, act, keyFor, norm, checkGoal, absentSeen, explainGoal, ARIA, LETTER_CEILING,
   neverMatcher, pageSig, MIN_CONFIDENCE, LOOP_LIMIT };

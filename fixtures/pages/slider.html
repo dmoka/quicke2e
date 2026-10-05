@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- v0.4 fixture: a range slider with no <label>, only a caption next to it (demoqa shape). -->
+<html><head><meta charset="utf-8"><title>Settings</title></head><body><script src="/truth.js"></script>
+<h1>Settings</h1>
+<div class="row"><div class="caption">Volume</div><input type="range" min="0" max="100" value="25" class="range-slider"></div>
+<button id="save" data-truth="save">Save settings</button>
+<p id="out"></p>
+<script>
+document.getElementById("save").onclick = () => {
+  document.getElementById("out").textContent = "Saved volume " + document.querySelector(".range-slider").value;
+};
+</script>
+</body></html>

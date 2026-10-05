@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- v0.4 fixture: an autocomplete (react-select shape). The input has role=combobox and a generated id,
+     no <label>; suggestions appear only after typing. 0.3.0 offered it only as CLICK (demoqa: 24 clicks). -->
+<html><head><meta charset="utf-8"><title>Student form</title></head><body><script src="/truth.js"></script>
+<h1>Student form</h1>
+<div class="subjects">
+  <div class="caption">Subjects</div>
+  <div class="control"><span id="chips"></span>
+    <input id="react-select-2-input" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off" data-truth="subjects">
+  </div>
+  <div id="menu" role="listbox" hidden></div>
+</div>
+<button id="submit" data-truth="submit">Submit</button>
+<p id="out"></p>
+<script>
+const all = ["Maths", "Physics", "Chemistry", "English", "Economics", "Arts"];
+const inp = document.getElementById("react-select-2-input"), menu = document.getElementById("menu"), chips = document.getElementById("chips");
+const picked = [];
+inp.addEventListener("input", () => {
+  const q = inp.value.trim().toLowerCase();
+  menu.replaceChildren(...all.filter((s) => q && s.toLowerCase().includes(q) && !picked.includes(s)).map((s) => {
+    const o = Object.assign(document.createElement("div"), { textContent: s }); o.setAttribute("role", "option");
+    o.onclick = () => { picked.push(s); chips.textContent = picked.join(", "); inp.value = ""; menu.hidden = true; inp.setAttribute("aria-expanded", "false"); };
+    return o; }));
+  menu.hidden = !menu.children.length; inp.setAttribute("aria-expanded", String(!menu.hidden));
+});
+document.getElementById("submit").onclick = () => { document.getElementById("out").textContent = "Submitted subjects: " + (picked.join(", ") || "none"); };
+</script>
+</body></html>

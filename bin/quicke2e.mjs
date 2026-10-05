@@ -22,13 +22,14 @@ const COMMANDS = {
       "--storage": "value", "-o": "value", "--redact": "many", "--max-pages": "value" } },
   run: { args: "<spec.mjs>", about: "run the flows in a spec file",
     flags: { "--base": "value", "--engine": "value", "--map": "value", "--runs": "value", "--emit": "value", "--trace": "value",
-      "--video": "value", "--allow-weak": "bool", "--only": "value", "--json": "bool", "--min-confidence": "value" } },
+      "--video": "value", "--allow-weak": "bool", "--only": "value", "--json": "bool", "--min-confidence": "value",
+      "--nav-timeout": "value", "--reset": "value" } },
   check: { args: "<spec.mjs>", about: "validate specs against the running app (no engine call)",
     flags: { "--base": "value", "--only": "value", "--json": "bool" } },
 };
 const HELP = {
   "--start": "comma-separated start paths (default /)", "--safe": "safe crawl: never submits a form",
-  "--i-own-this-data": "allow a full crawl on a host other than localhost", "--reset": "command that restores seed data before the crawl",
+  "--i-own-this-data": "allow a full crawl on a host other than localhost", "--reset": "shell command that restores seed data (discover: before the crawl; run: before every run)",
   "--inputs": "JSON file with form values for the crawl", "--storage": "Playwright storage-state file (logged-in crawl)",
   "-o": "output map file (default quicke2e.map.json)", "--redact": "CSS selector or /regex/ the engine must never see (repeatable)",
   "--max-pages": "page limit (default 40)", "--base": "app base URL (default $APP_BASE, then http://localhost:3000)",
@@ -39,6 +40,7 @@ const HELP = {
   "--json": "print all records as one JSON array on the last line of stdout",
   "--min-confidence": "an action the engine picks below this confidence is not executed (default 0.3; a flow's minConfidence overrides)",
   "--headed": "show the browser", "--headless": "hide the browser",
+  "--nav-timeout": "page-load timeout in ms (default 30000; a flow's navTimeout overrides)",
 };
 const usageText = (c) => {
   if (c && COMMANDS[c]) {
@@ -141,7 +143,7 @@ async function weak(flow, base, browser) {
   if (flow.expectSeen?.length) await ctx.addInitScript("window.__jevSeen = [];");
   const page = await ctx.newPage();
   try {
-    await page.goto(base.replace(/\/$/, "") + at, { waitUntil: "domcontentloaded" });
+    await page.goto(base.replace(/\/$/, "") + at, { waitUntil: "domcontentloaded", ...(navTimeout || flow.navTimeout ? { timeout: flow.navTimeout ?? navTimeout } : {}) });
     await settle(page);
     const snap = await page.evaluate(`(${SNAPSHOT})()`);
     return { at, weak: await checkGoal(page, flow, snap), absent: flow.control ? null : await absentSeen(page, flow) };
@@ -186,6 +188,8 @@ const engine = opt("--engine", "jev");
 const runs = Number(opt("--runs", 1));
 if (!(runs >= 1)) die(`--runs needs a number of at least 1.`);
 const minConfidence = opt("--min-confidence") != null ? Number(opt("--min-confidence")) : undefined;
+const navTimeout = opt("--nav-timeout") != null ? Number(opt("--nav-timeout")) : undefined;
+if (navTimeout != null && !(navTimeout > 0)) die("--nav-timeout needs a number of milliseconds.");
 if (minConfidence != null && !(minConfidence >= 0 && minConfidence <= 1)) die("--min-confidence needs a number between 0 and 1.");
 if (cmd === "run") await preflightEngine(engine);
 const map = opt("--map") ? JSON.parse(fs.readFileSync(opt("--map"), "utf8")) : null;
@@ -220,8 +224,15 @@ for (const flow of flows) {
   for (let k = 0; k < runs; k++) {
     const trace = opt("--trace") ? path.join(opt("--trace"), `${flow.name}-${Date.now()}.json`) : undefined;
     if (trace) fs.mkdirSync(opt("--trace"), { recursive: true });
+    if (opt("--reset")) {
+      const { execSync } = await import("node:child_process");
+      try { execSync(opt("--reset"), { stdio: "ignore", shell: true }); }
+      catch (e) { out(`RESET_FAILED    ${flow.name}: "${opt("--reset")}" exited with ${e.status}`); all.push(skipped(flow, "RESET_FAILED", `reset exited with ${e.status}`)); failed++; continue; }
+    }
     const rec = await runOnce({ flow, engine, browser, base: fbase, trace, ...(map ? { map } : {}),
-      ...(minConfidence != null ? { minConfidence } : {}), ...(opt("--video") ? { video: opt("--video") } : {}) });
+      ...(navTimeout ? { navTimeout } : {}),
+      ...(minConfidence != null ? { minConfidence } : {}), ...(opt("--video") ? { video: opt("--video") } : {}),
+      ...(opt("--emit") ? { locate: true } : {}) });
     if (rec.error) rec.error = stripAnsi(rec.error);
     all.push(rec);
     if (!rec.passed) failed++;
@@ -230,6 +241,7 @@ for (const flow of flows) {
       + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (rec.httpStatus ? `  HTTP ${rec.httpStatus}` : "") + (flow.kind ? `  (${flow.kind})` : "")
       + (rec.route?.hops?.length ? `  via map -> ${rec.route.pattern}` : "") + (rec.error ? `  ${rec.error}` : ""));
     if (!rec.passed) for (const l of why(rec)) out(`      ${l}`);
+    for (const x of rec.slowSteps || []) out(`      slow: ${x.op} "${x.label}" took ${(x.ms / 1000).toFixed(1)} s`);
     if (rec.passed && opt("--emit")) {
       const { generate } = await import("../codegen/codegen.mjs");
       fs.mkdirSync(opt("--emit"), { recursive: true });

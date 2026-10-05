@@ -161,7 +161,9 @@ test("codegen: a spec key with a space emits valid bracket access; a secret key 
   const { code } = generate(rec, flow);
   assert.match(code, /fill\(INPUTS\["discount code"\]\)/);
   assert.ok(!code.includes("Pw123456!"));
-  assert.match(code, /missing\("T_PASSWORD"\)/);
+  // v0.4: a missing secret skips THIS test (it used to throw at import and stop the whole file)
+  assert.match(code, /test\.skip\(!process\.env\.T_PASSWORD,/);
+  assert.ok(!/missing\(/.test(code));
 });
 
 test("discover safe: a plain button and a switch are never clicked", async () => {
@@ -301,7 +303,7 @@ test("CLI check: control replaces the start page in the WEAK_ASSERTION check; ex
 test("codegen: expectAbsent becomes a not.toContainText on the user-visible text", () => {
   const flow = { name: "t", start: "/attack-code.html", expect: ["This code has expired."], expectAbsent: ["SUMMER25 25%"] };
   const { code, sidecar } = generate({ passed: true, outcome: "DONE_VERIFIED", engine: "jev", base, wallMs: 1, steps: [] }, flow);
-  assert.match(code, /not\.toContainText\("SUMMER25 25%", \{ useInnerText: true \}\)/);
+  assert.match(code, /expect\(await seenText\(page\)\)\.not\.toContain\("SUMMER25 25%"\)/);   // v0.4: same text function as the run
   assert.deepEqual(sidecar.expectAbsent, ["SUMMER25 25%"]);
 });
 
@@ -385,4 +387,64 @@ test("v0.3 CLI: --json includes flows that were never run (UNREACHABLE)", async 
   assert.equal(r.code, 1);
   const recs = JSON.parse(r.stdout.trim().split("\n").pop());
   assert.ok(recs.length >= 3 && recs.every((x) => x.outcome === "UNREACHABLE" && x.passed === false && !/\x1b/.test(x.error)), JSON.stringify(recs));
+});
+
+// ---- v0.4 (Round 2): verified locators and replay-safe assertions ----
+import { verifiedLocator, parseAria } from "../src/locate.mjs";
+
+test("v0.4 locator: a shared name is scoped to its row; a number field gets its real role; a long link its full name", async () => {
+  const page = await browser.newPage();
+  await page.setContent(`<ul><li><b>Sauce Labs Backpack</b> $29.99 <button id=b1>Add to cart</button></li>
+    <li><b>Sauce Labs Bike Light</b> $9.99 <button id=b2>Add to cart</button></li></ul>
+    <label for=qty>Quantity</label><input id=qty type=number value=1>
+    <a id=th href="/p/1">Thor Hammer <span>Compare</span> CO₂: A B C D E $11.14</a>`);
+  const second = await verifiedLocator(page, "#b2");
+  assert.equal(second.how, "scoped", JSON.stringify(second));
+  const run = (code) => new Function("page", `return ${code};`)(page);
+  assert.equal(await run(second.code).count(), 1);
+  assert.equal(await run(second.code).getAttribute("id"), "b2");
+  const qty = await verifiedLocator(page, "#qty");
+  assert.match(qty.code, /getByRole\("spinbutton", \{ name: "Quantity", exact: true \}\)/);
+  const link = await verifiedLocator(page, "#th");
+  assert.equal(await run(link.code).getAttribute("id"), "th");
+  assert.match(link.code, /new RegExp\("\^Thor Hammer Compare CO₂: A B C D E"\)/);   // price dropped, prefix kept
+  await page.close();
+});
+
+test("v0.4 codegen: verified locator wins; select assertion reads the chosen option; expectSeen uses the recorder; storageState travels", () => {
+  const flow = { name: "t", start: "/", storageState: "auth.json", expectSeen: ["Saved"],
+    expectState: [{ role: "combobox", name: "Sort", value: "Price (low to high)" }] };
+  const rec = { passed: true, outcome: "DONE_VERIFIED", engine: "jev", base, wallMs: 1, steps: [
+    { n: 1, op: "CLICK", label: "Add to cart", role: "button", url: base + "/",
+      locator: { code: 'page.getByRole("listitem").filter({ hasText: "Bike Light" }).getByRole("button", { name: "Add to cart", exact: true })', how: "scoped" } }] };
+  const { code } = generate(rec, flow);
+  assert.match(code, /getByRole\("listitem"\)\.filter\(\{ hasText: "Bike Light" \}\)/);
+  assert.match(code, /el\.tagName === "SELECT" \? \(el\.selectedOptions\[0\]\?\.label/);
+  assert.match(code, /page\.addInitScript\(/);
+  assert.match(code, /__jevSeen/);
+  assert.match(code, /test\.use\(\{ storageState: "auth\.json" \}\)/);
+});
+
+test("v0.4 parseAria: role and name from Playwright's aria snapshot", () => {
+  assert.deepEqual(parseAria('- button "Add to cart"'), { role: "button", name: "Add to cart" });
+  assert.deepEqual(parseAria('- spinbutton "Quantity": "1"'), { role: "spinbutton", name: "Quantity" });
+  assert.deepEqual(parseAria(`- 'link "A: B"':\n  - /url: /x`), { role: "link", name: "A: B" });
+});
+
+// ---- v0.4 (Round 3) ----
+test("v0.4 auth: a flow with storageState whose start page redirects to sign-in stops with AUTH_REQUIRED, no engine call", async () => {
+  const http = await import("node:http");
+  const srv = http.createServer((req, res) => {
+    if (req.url.startsWith("/sign-in")) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<h1>Sign in</h1><button>Sign in</button>"); }
+    res.writeHead(302, { location: "/sign-in?next=" + encodeURIComponent(req.url) }); res.end();
+  });
+  await new Promise((r) => srv.listen(0, r));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const rec = await runOnce({ flow: { name: "a", start: "/orders", goal: "Open my orders", expect: ["Order"],
+    storageState: { cookies: [], origins: [] } }, engine: "local", browser, base: b });
+  srv.close();
+  assert.equal(rec.outcome, "AUTH_REQUIRED");
+  assert.equal(rec.passed, false);
+  assert.equal(rec.steps.length, 0);
+  assert.match(rec.error, /storageState is missing or expired/);
 });
