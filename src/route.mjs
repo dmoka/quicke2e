@@ -38,6 +38,9 @@ export async function pickTarget(map, goal, engine, startPattern, inputs, redact
   const out = { cost: d.cost || 0, ms: d.ms, decisions: [{ choice: d.choice, confidence: d.confidence }] };
   if (d.choice === "STAY" || !String(d.choice).startsWith("PAGE:")) return { ...out, target: null };
   const page = pages[Number(d.choice.split(":")[1])];
+  // The start page's own pattern is STAY. Another instance of it is a different resource: a spec
+  // that starts on /orders/281 was routed to /orders/301 and cancelled that order (TicketBay run-4).
+  if (page.pattern === startPattern) return { ...out, target: null };
   // One instance, or an id-free pattern: done.
   const into = map.edges.filter((e) => e.to === page.pattern && e.via.label);
   const byUrl = new Map();

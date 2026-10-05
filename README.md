@@ -155,7 +155,8 @@ engine decides the heats in parallel, each with a "none of these" option, and th
 between the heat winners. No candidate is dropped.
 
 With a map (`--map`), the engine first picks the page the goal needs. If the start page is in the map
-and the map has a link route, code clicks along that route.
+and the map has a link route, code clicks along that route. A run never moves to another page of the
+start page's own pattern: a spec that starts on `/orders/281` stays on order 281.
 
 ### 3. Verify
 

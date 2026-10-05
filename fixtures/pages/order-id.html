@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Order</title>
+<!-- Served for every /orders/<n> path (fixtures/serve.mjs). The page reads its id from the path. -->
+<style>body{font-family:system-ui;padding:16px;max-width:620px}</style></head><body><script src="/truth.js"></script>
+<a href="/orders" data-truth="list">My orders</a>
+<main id="m"></main>
+<script>
+var id = location.pathname.split("/").pop();
+document.getElementById("m").innerHTML = "<h1>Order TB-00" + id + "</h1><p>Total paid €42.00</p>" +
+  "<button data-truth='cancel-" + id + "'>Cancel order</button>";
+</script></body></html>
