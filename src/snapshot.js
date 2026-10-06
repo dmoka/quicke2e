@@ -322,6 +322,10 @@
     if (list.length < 2 || list.length > 40) continue;
     const els = list.map((a) => nodeEls.get(a.node));
     if (els.some((e) => !e)) continue;
+    // Links with the same name AND the same target are one action (TicketBay's header "Events" and its
+    // breadcrumb "Events" both go to /). Context there is noise: "Events · Events/Midnight Arcade —
+    // Neon Tour/" on both made Shisa DE-1 pick "Pay" over "Apply" (0.4.0, 5/5 runs).
+    if (els.every((e) => e.tagName === "A" && e.href) && new Set(els.map((e) => e.href)).size === 1) continue;
     const ctx = els.map((el) => {
       let card = null;
       for (let p = el.parentElement, d = 0; p && d < 8; p = p.parentElement, d++) {

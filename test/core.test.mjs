@@ -389,6 +389,18 @@ test("v0.3 CLI: --json includes flows that were never run (UNREACHABLE)", async 
   assert.ok(recs.length >= 3 && recs.every((x) => x.outcome === "UNREACHABLE" && x.passed === false && !/\x1b/.test(x.error)), JSON.stringify(recs));
 });
 
+test("v0.5 context labels: identical buttons get their card; identical links to the same target get none", async () => {
+  const page = await browser.newPage();
+  await page.goto("data:text/html,<nav><a href='/'>Events</a></nav><ol><li><a href='/'>Events</a>/Midnight Arcade/</li></ol>"
+    + "<ul><li><h3>Backpack</h3><button>Add to cart</button></li><li><h3>Bike Light</h3><button>Add to cart</button></li></ul>"
+    + "<p><a href='/a'>More</a> one</p><p><a href='/b'>More</a> two</p>");
+  const labels = (await page.evaluate(`(${SNAPSHOT})()`)).actions.map((a) => a.label);
+  assert.deepEqual(labels.filter((l) => l.startsWith("Events")), ["Events", "Events"], JSON.stringify(labels));
+  assert.deepEqual(labels.filter((l) => l.startsWith("Add to cart")), ["Add to cart · Backpack", "Add to cart · Bike Light"]);
+  assert.equal(labels.filter((l) => l.startsWith("More ·")).length, 2, JSON.stringify(labels));   // other targets keep context
+  await page.close();
+});
+
 // ---- v0.4 (Round 2): verified locators and replay-safe assertions ----
 import { verifiedLocator, parseAria } from "../src/locate.mjs";
 

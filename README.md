@@ -29,19 +29,19 @@
 <br>
 <br>
 
-![QuickE2E buys two tickets with a discount code on TicketBay, from the home page, in 4.8 seconds](docs/demo.gif)
+![QuickE2E with the local Shisa DE-1 model buys two tickets with a discount code on TicketBay, from the home page, in 2.9 seconds](docs/demo.gif)
 
-*Recorded at 1× speed. Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
+*Recorded at 1× speed with the `local` engine (Shisa DE-1). Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
 
 | launch task, 5 runs per arm | median wall time | pass | cost / run |
 |---|---|---|---|
-| **QuickE2E, `local` engine, Shisa DE-1** | **3.23 s** | 5/5 | **$0** |
-| **QuickE2E, hosted Jev** | **4.79 s** | 5/5 | $0.00030 |
-| Claude Code + Playwright MCP, Sonnet 5 | 20.89 s (18.4–37.3) | 5/5 | $0.0888 |
+| **QuickE2E, `local` engine, Shisa DE-1** | **2.94 s** | 5/5 | **$0** |
+| **QuickE2E, hosted Jev** | **3.74 s** | 5/5 | $0.00038 |
+| Claude Code + Playwright MCP, Sonnet 5 | 25.29 s (21.8–29.6) | 5/5 | $0.0896 |
 
-Hosted Jev against Claude Code: **4.3× faster and 296× cheaper.** Same start page, same goal, one SQL
-check for every run. Measured 2026-09-29 (Jev, Claude Code) and 2026-09-30 (Shisa DE-1) on an M2 Max.
-Raw runs: [`bench/results/launch-task.json`](bench/results/launch-task.json). [Method and other tasks](#benchmarks).
+Local Shisa DE-1 against Claude Code: **8.6× faster, at $0 per run.** Hosted Jev against Claude Code:
+**6.7× faster and 234× cheaper.** Same start page, same goal, one SQL check for every run. Measured
+2026-10-06 with QuickE2E 0.5.0 on an M2 Max. Raw runs: [`bench/results/launch-task.json`](bench/results/launch-task.json). [Method and other tasks](#benchmarks).
 
 ## What it is
 
@@ -153,6 +153,14 @@ BLOCKED and does not act on it.
 When a page has more candidates than one decision can hold, QuickE2E splits them into heats. The
 engine decides the heats in parallel, each with a "none of these" option, and then decides a final
 between the heat winners. No candidate is dropped.
+
+After an action, QuickE2E waits until the page has been quiet for 150 ms before it decides. With a
+hosted engine, it sends the next decision before that wait, on the page as it is. After the wait it
+builds the request again from the settled page. It uses the early answer only when both requests are
+byte-identical; otherwise it discards the answer and asks again. The engine gets the same input as
+without the early call, so the decisions do not change. A discarded early call is counted in the
+run's cost. `QUICKE2E_SPECULATE=0` turns this off. It is off for the `local` engine, which answers one
+request at a time.
 
 With a map (`--map`), the engine first picks the page the goal needs. If the start page is in the map
 and the map has a link route, code clicks along that route. A run never moves to another page of the
@@ -280,16 +288,23 @@ command, end to end, including browser or MCP start-up.
 
 The agent starts on the home page, finds the event in the list, opens it, continues to checkout,
 applies WELCOME10, enters the email and name, and pays. The check for every run: one new paid order,
-WELCOME10 applied, total €109.39. TicketBay in its dark theme, measured 2026-09-30.
+WELCOME10 applied, total €109.39. TicketBay in its dark theme, QuickE2E 0.5.0, measured 2026-10-06.
 
 | | pass | median wall | steps | cost / run |
 |---|---|---|---|---|
-| **QuickE2E, `local` engine, Shisa DE-1** | **5/5** | **3.23 s** | 7 | **$0** |
-| **QuickE2E, `jev` engine** | **5/5** | **4.79 s** | 7 | $0.00030 |
-| Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 20.89 s (18.4–37.3) | 13–15 tool calls | $0.0888 |
+| **QuickE2E, `local` engine, Shisa DE-1** | **5/5** | **2.94 s** (2.77–2.99) | 7 | **$0** |
+| **QuickE2E, `jev` engine** | **5/5** | **3.74 s** (3.59–4.74) | 7 | $0.00038 |
+| Claude Code + Playwright MCP, Sonnet 5 | 5/5 | 25.29 s (21.8–29.6) | 15–16 tool calls | $0.0896 |
 
-Hosted Jev against Sonnet 5: 20.89 / 4.79 = 4.36 (4.3× faster); $0.0888 / $0.00030 = 296 (296×
-cheaper). Median decision time: 94 ms on Shisa DE-1 (local, no network), 327 ms on hosted Jev.
+Shisa DE-1 against Sonnet 5: 25.29 / 2.94 = 8.60 (8.6× faster), $0 per run. Hosted Jev against
+Sonnet 5: 25.29 / 3.74 = 6.76 (6.7× faster); $0.0896 / $0.00038 = 234 (234× cheaper). Median decision
+time: 86 ms on Shisa DE-1 (local, no network), 300 ms on hosted Jev.
+
+Jev's cost per run includes early decisions that were discarded (see [Decide](#2-decide)): 0.4.0 cost
+$0.00031 per run on the same task. The first measurement (QuickE2E 0.2.0, 2026-09-29/30): Shisa DE-1
+3.23 s, Jev 4.79 s, Claude Code 20.89 s; raw runs in
+[`bench/results/launch-task-2026-09-29.json`](bench/results/launch-task-2026-09-29.json). Claude Code's
+median changes from day to day on the same task: 20.89 s then, 25.29 s on 2026-10-06.
 
 <details>
 <summary>App version and reproduce</summary>
@@ -509,6 +524,16 @@ quicke2e check <spec.mjs> [--base url]
 | `--reset` | run | shell command run before every run, to restore seed data (a failing command stops that flow with `RESET_FAILED`) |
 | `--headed` / `--headless` | all | force the browser mode |
 
+| environment variable | effect |
+|---|---|
+| `OPENROUTER_API_KEY` | key for the `jev` engine |
+| `AI_GATEWAY_API_KEY` | key for the `vercel` engine |
+| `LOCAL_URL` | URL of the local engine server (default `http://127.0.0.1:8822`) |
+| `APP_BASE` | default `--base` |
+| `QUICKE2E_SPECULATE=0` | turn off early decisions (see [Decide](#2-decide)) |
+| `QUICKE2E_PROF=1` | add per-step timings (settle, snapshot, decide, act) to each run record |
+| `JEV_DEBUG=1` | print the page state and the options of every decision to stderr |
+
 </details>
 
 <details>
@@ -569,7 +594,7 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 - **Page content reaches the engine unless you declare it with `redact`.** No rule guesses which page text is sensitive. An automatic "looks like a code" rule was built and measured: it broke four working flows (order numbers, versions, SKUs, a year) and still missed other code shapes.
 - **A full crawl changes data.** Use a throwaway database.
 - **`--safe` is best effort.** It clicks only controls that declare they open something (menus, tabs, dropdowns) and skips links whose text or URL names a destructive verb. A GET link or an opener with a side effect can still change data.
-- **The `local` engines fail more fixtures than Jev** (58/59 and 56/59 against 59/59). Eikos-4B is slower than Jev (a plain checkout in 4.4 s against 3.05 s). Shisa DE-1 is faster but needs a 32 GB Mac.
+- **The `local` engines fail more fixtures than Jev.** On the 74-fixture suite (2026-10-06): Shisa DE-1 71/74, Jev 74/74. Shisa DE-1 answers BLOCKED on a field whose label matches no spec key and on a submit inside an iframe, and clicks one save button twice. On the earlier 59-fixture suite the two local engines passed 58/59 and 56/59. Eikos-4B is slower than Jev (a plain checkout in 4.4 s against 3.05 s). Shisa DE-1 is faster but needs a 32 GB Mac.
 
 <details>
 <summary>What does a run cost?</summary>

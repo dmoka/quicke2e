@@ -3,9 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromium, runOnce, SNAPSHOT, settle, checkGoal, absentSeen } from "../src/loop.mjs";
-import { discover } from "../src/discover.mjs";
-import { parseRedactArg } from "../src/redact.mjs";
+import module from "node:module";
+// PERF: V8 code cache for Playwright's modules (Node >= 22.1; ~50 ms per start once the cache is warm).
+// It must be on before the first import of playwright, so the loop is imported dynamically.
+module.enableCompileCache?.();
+const { chromium, runOnce, SNAPSHOT, settle, checkGoal, absentSeen } = await import("../src/loop.mjs");
 
 const PKG = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const out = (s = "") => process.stdout.write(s + "\n");
@@ -127,6 +129,10 @@ async function preflightEngine(engine) {
   if (engine === "jev" && !process.env.OPENROUTER_API_KEY)
     die("Set OPENROUTER_API_KEY for the jev engine (https://openrouter.ai/keys), or use --engine local.");
   if (engine === "vercel" && !process.env.AI_GATEWAY_API_KEY) die("Set AI_GATEWAY_API_KEY for the vercel engine.");
+  // PERF: open the TLS connection to the engine while the browser starts; the first decision reuses it.
+  // An OPTIONS request without credentials: no page data, no cost (a HEAD answer closes the connection).
+  const host = { jev: "https://openrouter.ai/api/alpha/decisions", vercel: "https://ai-gateway.vercel.sh/v1/evaluate" }[engine];
+  if (host) fetch(host, { method: "OPTIONS", signal: AbortSignal.timeout(3000) }).then((r) => r.arrayBuffer()).catch(() => {});
   if (engine === "local") {
     const url = process.env.LOCAL_URL || "http://127.0.0.1:8822";
     const ok = await fetch(url, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok).catch(() => false);
@@ -167,6 +173,8 @@ function why(rec) {
 
 if (cmd === "discover") {
   const base = positional[0];
+  const { discover } = await import("../src/discover.mjs");
+  const { parseRedactArg } = await import("../src/redact.mjs");
   const inputs = opt("--inputs") ? JSON.parse(fs.readFileSync(opt("--inputs"), "utf8")) : {};
   const dbrowser = await launch();
   const map = await discover({ base, browser: dbrowser, start: (opt("--start", "/")).split(","), mode: flag("--safe") ? "safe" : "full",
@@ -205,22 +213,28 @@ for (const flow of flows) {
   if (weakKeys.length) out(`note: ${flow.name}: ${weakKeys.join(", ")} ${weakKeys.length > 1 ? "are" : "is a"} weak secret${weakKeys.length > 1 ? "s" : ""}`
     + ` (short or a common word). It is kept out of the goal, but the page may echo it to the engine.`);
   // An app that is not running is the most common first failure: say so in one line, not a stack trace.
-  let w;
-  try { w = await weak(flow, fbase, browser); }
-  catch (e) {
-    const msg = `${fbase.replace(/\/$/, "")}${flow.control || flow.start || "/"} (${stripAnsi(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`;
-    out(`UNREACHABLE     ${flow.name}: ${msg}`);
-    all.push(skipped(flow, "UNREACHABLE", msg)); failed++; continue;
-  }
-  if (w.weak || w.absent) {
+  const unreachableMsg = (e) => `${fbase.replace(/\/$/, "")}${flow.control || flow.start || "/"} (${stripAnsi(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`;
+  // Prints the WEAK_ASSERTION / ABSENT_ON_START line; true when the flow must not run.
+  const weakStop = (w) => {
+    if (!(w.weak || w.absent)) return false;
     const msg = w.absent ? `"${w.absent}" is already visible on ${w.at}. expectAbsent must name a state only success reaches.`
       : flow.control ? `the assertion is also true on the control page ${w.at}, so it cannot tell a refusal from a success.`
       : `the assertion is already true on ${w.at} before any work.`;
     out(`${w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION "} ${flow.name}: ${msg}`);
-    if (cmd === "check" || !flag("--allow-weak")) {
-      all.push(skipped(flow, w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION", msg)); failed++; continue;
-    }
-  } else if (cmd === "check") { out(`ok              ${flow.name}`); all.push({ ...skipped(flow, "OK", null), passed: true }); continue; }
+    if (cmd === "check" || !flag("--allow-weak")) { all.push(skipped(flow, w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION", msg)); failed++; return true; }
+    return false;
+  };
+  // PERF: `run` checks the start page inside the first run's own page load (runOnce startCheck), which
+  // saves weak()'s extra browser context and page load. `check`, and a flow with a `control` page
+  // (a different URL), still load it separately.
+  const separate = cmd === "check" || flow.control;
+  if (separate) {
+    let w;
+    try { w = await weak(flow, fbase, browser); }
+    catch (e) { const msg = unreachableMsg(e); out(`UNREACHABLE     ${flow.name}: ${msg}`); all.push(skipped(flow, "UNREACHABLE", msg)); failed++; continue; }
+    if (weakStop(w)) continue;
+    if (cmd === "check") { out(`ok              ${flow.name}`); all.push({ ...skipped(flow, "OK", null), passed: true }); continue; }
+  }
   for (let k = 0; k < runs; k++) {
     const trace = opt("--trace") ? path.join(opt("--trace"), `${flow.name}-${Date.now()}.json`) : undefined;
     if (trace) fs.mkdirSync(opt("--trace"), { recursive: true });
@@ -232,7 +246,12 @@ for (const flow of flows) {
     const rec = await runOnce({ flow, engine, browser, base: fbase, trace, ...(map ? { map } : {}),
       ...(navTimeout ? { navTimeout } : {}),
       ...(minConfidence != null ? { minConfidence } : {}), ...(opt("--video") ? { video: opt("--video") } : {}),
-      ...(opt("--emit") ? { locate: true } : {}) });
+      ...(opt("--emit") ? { locate: true } : {}), ...(!separate && k === 0 ? { startCheck: weakStop } : {}) });
+    if (rec.startCheck) break;   // weakStop already printed and recorded it
+    if (!separate && k === 0 && rec.unreachable) {
+      const msg = unreachableMsg({ message: rec.unreachable });
+      out(`UNREACHABLE     ${flow.name}: ${msg}`); all.push(skipped(flow, "UNREACHABLE", msg)); failed++; break;
+    }
     if (rec.error) rec.error = stripAnsi(rec.error);
     all.push(rec);
     if (!rec.passed) failed++;

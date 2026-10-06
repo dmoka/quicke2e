@@ -2,138 +2,29 @@
  "task": "buy-from-home (bench/demo-flows.mjs)",
  "app": "TicketBay bench/2026-10, dark theme",
  "machine": "M2 Max",
+ "quicke2e": "0.5.0",
  "runs": [
   {
    "task": "buy-from-home",
-   "arm": "claude-code+playwright-mcp",
-   "engine": "sonnet",
-   "run": 1,
-   "pass": true,
-   "wallMs": 25814,
-   "cost": 0.08883300000000001,
-   "tokens": 121588,
-   "steps": 13,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "claude-code+playwright-mcp",
-   "engine": "sonnet",
-   "run": 2,
-   "pass": true,
-   "wallMs": 20892,
-   "cost": 0.08882100000000001,
-   "tokens": 121583,
-   "steps": 13,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "claude-code+playwright-mcp",
-   "engine": "sonnet",
-   "run": 3,
-   "pass": true,
-   "wallMs": 20717,
-   "cost": 0.0879002,
-   "tokens": 121486,
-   "steps": 13,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "claude-code+playwright-mcp",
-   "engine": "sonnet",
-   "run": 4,
-   "pass": true,
-   "wallMs": 37264,
-   "cost": 0.0912026,
-   "tokens": 141294,
-   "steps": 13,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "claude-code+playwright-mcp",
-   "engine": "sonnet",
-   "run": 5,
-   "pass": true,
-   "wallMs": 18398,
-   "cost": 0.0801568,
-   "tokens": 107099,
-   "steps": 13,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "quicke2e",
-   "engine": "jev",
-   "run": 1,
-   "pass": true,
-   "wallMs": 5127,
-   "cost": 0.00029920799999999997,
-   "tokens": 7124,
-   "steps": 7,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "quicke2e",
-   "engine": "jev",
-   "run": 2,
-   "pass": true,
-   "wallMs": 4664,
-   "cost": 0.00029920799999999997,
-   "tokens": 7124,
-   "steps": 7,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "quicke2e",
-   "engine": "jev",
-   "run": 3,
-   "pass": true,
-   "wallMs": 4789,
-   "cost": 0.00029920799999999997,
-   "tokens": 7124,
-   "steps": 7,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "quicke2e",
-   "engine": "jev",
-   "run": 4,
-   "pass": true,
-   "wallMs": 5129,
-   "cost": 0.00029920799999999997,
-   "tokens": 7124,
-   "steps": 7,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
-   "arm": "quicke2e",
-   "engine": "jev",
-   "run": 5,
-   "pass": true,
-   "wallMs": 4766,
-   "cost": 0.00029920799999999997,
-   "tokens": 7124,
-   "steps": 7,
-   "captured": "2026-09-29"
-  },
-  {
-   "task": "buy-from-home",
    "arm": "quicke2e",
    "engine": "local:shisa-de-1",
    "run": 1,
    "pass": true,
-   "wallMs": 3585,
+   "wallMs": 2990,
    "cost": 0,
    "tokens": 3961,
    "steps": 7,
-   "captured": "2026-09-30"
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    127,
+    114,
+    87,
+    82,
+    80,
+    111,
+    112
+   ]
   },
   {
    "task": "buy-from-home",
@@ -141,11 +32,21 @@
    "engine": "local:shisa-de-1",
    "run": 2,
    "pass": true,
-   "wallMs": 3261,
+   "wallMs": 2954,
    "cost": 0,
    "tokens": 3961,
    "steps": 7,
-   "captured": "2026-09-30"
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    137,
+    114,
+    87,
+    95,
+    80,
+    104,
+    83
+   ]
   },
   {
    "task": "buy-from-home",
@@ -153,11 +54,21 @@
    "engine": "local:shisa-de-1",
    "run": 3,
    "pass": true,
-   "wallMs": 3118,
+   "wallMs": 2937,
    "cost": 0,
    "tokens": 3961,
    "steps": 7,
-   "captured": "2026-09-30"
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    142,
+    80,
+    84,
+    78,
+    78,
+    87,
+    79
+   ]
   },
   {
    "task": "buy-from-home",
@@ -165,11 +76,21 @@
    "engine": "local:shisa-de-1",
    "run": 4,
    "pass": true,
-   "wallMs": 3087,
+   "wallMs": 2784,
    "cost": 0,
    "tokens": 3961,
    "steps": 7,
-   "captured": "2026-09-30"
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    107,
+    86,
+    85,
+    81,
+    81,
+    86,
+    86
+   ]
   },
   {
    "task": "buy-from-home",
@@ -177,11 +98,191 @@
    "engine": "local:shisa-de-1",
    "run": 5,
    "pass": true,
-   "wallMs": 3231,
+   "wallMs": 2769,
    "cost": 0,
    "tokens": 3961,
    "steps": 7,
-   "captured": "2026-09-30"
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    99,
+    86,
+    83,
+    85,
+    87,
+    80,
+    84
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "quicke2e",
+   "engine": "jev",
+   "run": 1,
+   "pass": true,
+   "wallMs": 4744,
+   "cost": 0.000382032,
+   "tokens": 7124,
+   "steps": 7,
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    509,
+    393,
+    363,
+    274,
+    306,
+    300,
+    330
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "quicke2e",
+   "engine": "jev",
+   "run": 2,
+   "pass": true,
+   "wallMs": 3594,
+   "cost": 0.000382032,
+   "tokens": 7124,
+   "steps": 7,
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    284,
+    309,
+    295,
+    337,
+    236,
+    298,
+    305
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "quicke2e",
+   "engine": "jev",
+   "run": 3,
+   "pass": true,
+   "wallMs": 3604,
+   "cost": 0.000382032,
+   "tokens": 7124,
+   "steps": 7,
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    322,
+    309,
+    299,
+    267,
+    246,
+    253,
+    363
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "quicke2e",
+   "engine": "jev",
+   "run": 4,
+   "pass": true,
+   "wallMs": 3741,
+   "cost": 0.000382032,
+   "tokens": 7124,
+   "steps": 7,
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    332,
+    338,
+    270,
+    357,
+    312,
+    298,
+    293
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "quicke2e",
+   "engine": "jev",
+   "run": 5,
+   "pass": true,
+   "wallMs": 4428,
+   "cost": 0.000382032,
+   "tokens": 7124,
+   "steps": 7,
+   "captured": "2026-10-06",
+   "version": "0.5.0",
+   "decisionMs": [
+    277,
+    1072,
+    259,
+    257,
+    279,
+    265,
+    336
+   ]
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "claude-code+playwright-mcp",
+   "engine": "sonnet",
+   "run": 1,
+   "pass": true,
+   "wallMs": 29606,
+   "cost": 0.1238544,
+   "tokens": 161466,
+   "steps": 15,
+   "captured": "2026-10-06"
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "claude-code+playwright-mcp",
+   "engine": "sonnet",
+   "run": 2,
+   "pass": true,
+   "wallMs": 23368,
+   "cost": 0.08279020000000001,
+   "tokens": 122140,
+   "steps": 15,
+   "captured": "2026-10-06"
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "claude-code+playwright-mcp",
+   "engine": "sonnet",
+   "run": 3,
+   "pass": true,
+   "wallMs": 21817,
+   "cost": 0.08964180000000001,
+   "tokens": 123506,
+   "steps": 15,
+   "captured": "2026-10-06"
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "claude-code+playwright-mcp",
+   "engine": "sonnet",
+   "run": 4,
+   "pass": true,
+   "wallMs": 25293,
+   "cost": 0.08670300000000002,
+   "tokens": 140544,
+   "steps": 16,
+   "captured": "2026-10-06"
+  },
+  {
+   "task": "buy-from-home",
+   "arm": "claude-code+playwright-mcp",
+   "engine": "sonnet",
+   "run": 5,
+   "pass": true,
+   "wallMs": 25502,
+   "cost": 0.091654,
+   "tokens": 143456,
+   "steps": 15,
+   "captured": "2026-10-06"
   }
  ]
 }

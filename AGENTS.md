@@ -161,11 +161,11 @@ repeats each flow.
 | `finalUrl` | string | the URL when the run ended |
 | `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |
 | `wallMs` | number | total run time in ms |
-| `cost` | number | engine cost in USD (`0` on `local`) |
+| `cost` | number | engine cost in USD (`0` on `local`), including early decisions that were discarded |
 | `engine` | string | `jev`, `vercel` or `local` |
 
-Other fields (`base`, `budget`, `decideMs`, `inferMs`, `weakEchoed`, per-step `target`, `inputKey`, `via`,
-`tokens`) are diagnostics. Do not depend on them.
+Other fields (`base`, `budget`, `decideMs`, `inferMs`, `weakEchoed`, `speculative` (early decisions used and
+wasted), per-step `target`, `inputKey`, `via`, `tokens`) are diagnostics. Do not depend on them.
 
 On a failure, read `assertions` (which ones did not hold), then `heldBack`, `loop` and `emptyRequired`,
 then the last entries of `steps`. The human output prints the same reasons under the FAIL line.

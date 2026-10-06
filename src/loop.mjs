@@ -14,6 +14,11 @@ const __dir = path.dirname(fileURLToPath(import.meta.url));
 const SEEN_TEXT = fs.readFileSync(path.join(__dir, "seen-text.js"), "utf8").replace(/^\/\/.*\n/gm, "").trim();
 const SNAPSHOT = fs.readFileSync(path.join(__dir, "snapshot.js"), "utf8").replaceAll("__SECRET_SRC__", SECRET_SRC.replace(/\\/g, "\\\\"));
 const KEY = process.env.OPENROUTER_API_KEY;
+// PERF (opt-in): QUICKE2E_PROF=1 adds per-phase timings (ms) to every step record as `prof`.
+const PROF = !!process.env.QUICKE2E_PROF;
+// PERF: speculative decision (see runOnce). QUICKE2E_SPECULATE=0 turns it off.
+const SPECULATE = process.env.QUICKE2E_SPECULATE !== "0";
+let lastNet = null;   // set by post(): { ttfb, body, tries } of the last engine call
 const LOCAL_URL = process.env.LOCAL_URL || "http://127.0.0.1:8822";
 // FIX (2026-09-21): was hardcoded to the reference app. A client could not point this at their own app
 // without editing the source. Resolution order: flow.base -> runOnce({base}) -> $APP_BASE -> default.
@@ -45,10 +50,12 @@ const RULES = "Choose the one operation that advances the goal from this page. "
 // Retry 429 and 5xx with backoff (roadmap #1; the bake-off lost 1 of 120 runs to an HTTP 520).
 async function post(url, body, auth, tries = 4) {
   for (let k = 0; ; k++) {
+    const tq = performance.now();
     const res = await fetch(url, { method: "POST",
       headers: { "Content-Type": "application/json", ...(auth ? { Authorization: `Bearer ${KEY}` } : {}) },
       body: JSON.stringify(body) }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }));
-    if (res.ok) return res.json();
+    if (res.ok) { const th = performance.now(); const j = await res.json();
+      lastNet = { ttfb: th - tq, body: performance.now() - th, tries: k + 1 }; return j; }
     if (k + 1 < tries && (res.status === 0 || res.status === 429 || res.status >= 500)) {
       await new Promise((r) => setTimeout(r, 400 * 2 ** k)); continue;
     }
@@ -268,27 +275,36 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     render, all: [...ranked].sort((x, y) => x.i - y.i) };
 }
 
-async function decide({ els, criteria, values }, snap, goal, history, engine, inputs, weakKeys, redact) {
-  const state = {
+function decisionState({ els, values }, snap, history) {
+  return {
     url: urlPattern(snap.url),   // SECURITY (audit S4): token-like path segments become :id
     title: snap.title.slice(0, 60),
     elements: els,
     ...(values && Object.keys(values).length ? { values } : {}),
     done: history.slice(-5),
   };
+}
+async function decide(space, snap, goal, history, engine, inputs, weakKeys, redact) {
+  const state = decisionState(space, snap, history), criteria = space.criteria;
   if (process.env.JEV_DEBUG) console.error(JSON.stringify({ state, criteria }));
   return choose({ state, criteria, goal, engine, inputs, weakKeys, redact });
 }
+// PERF: the exact engine input of one decision, as a string. Two snapshots with the same key get the
+// same request, so a decision made on one is the decision the loop would make on the other.
+const decisionKey = (space, snap, goal, history) =>
+  JSON.stringify([decisionState(space, snap, history), space.criteria, goal]);
 
 // One typed choice over the offered keys, on any engine. decide() uses it for the next action;
 // the map router (src/route.mjs) uses it to pick a target page. Same wire shape everywhere.
 export async function choose({ state, criteria, goal, rules = RULES, engine = "jev", inputs, weakKeys = [], redact = [] }) {
+  const tp = performance.now();
   // SECURITY: every secret spec value is scrubbed from the entire payload, wherever it appears
   // (weak ones only where the loop saw them echoed); declared redact patterns apply to page content.
   ({ state, criteria, goal, rules } = scrub({ state, criteria, goal, rules }, inputs, { weakKeys }));
   ({ state, criteria } = redactPatterns({ state, criteria }, redact));
   const questions = { action: { type: "choice", criteria, instructions: { goal, rules } } };
   const t0 = performance.now();
+  const prepMs = t0 - tp;
   if (engine === "vercel") {
     const res = await fetch("https://ai-gateway.vercel.sh/v1/evaluate", {
       method: "POST",
@@ -306,7 +322,8 @@ export async function choose({ state, criteria, goal, rules = RULES, engine = "j
     const r = await post("https://openrouter.ai/api/alpha/decisions",
       { model: "typesafe/jev-1.13", state, questions }, true);
     return { choice: r.answers.action.choice, confidence: r.answers.action.confidence,
-      ms: performance.now() - t0, tokens: r.usage?.input_tokens || 0, cost: r.usage?.cost || 0, truncated: false };
+      ms: performance.now() - t0, tokens: r.usage?.input_tokens || 0, cost: r.usage?.cost || 0, truncated: false,
+      ...(PROF ? { prepMs, net: lastNet } : {}) };
   }
   // "local": an open decision model served by local-engine/server.py, constrained to the offered
   // option labels by construction -- one prefill, then read only the labels' logits.
@@ -315,7 +332,7 @@ export async function choose({ state, criteria, goal, rules = RULES, engine = "j
   if (r.error) throw new Error(engine + ": " + r.error);
   return { choice: r.answers.action.choice, confidence: r.answers.action.confidence,
     ms: performance.now() - t0, inferMs: r.timing.infer_ms, queuedMs: r.timing.queued_ms,
-    tokens: r.usage.input_tokens, cost: 0, truncated: r.timing.truncated };
+    tokens: r.usage.input_tokens, cost: 0, truncated: r.timing.truncated, ...(PROF ? { prepMs, net: lastNet } : {}) };
 }
 
 // Text comes from the test spec. No model invents test data.
@@ -545,10 +562,11 @@ async function actOnce(page, action, fn) {
 
 export async function runOnce({ flow, engine = "local", budget = 30, browser: shared, trace,
                                 base, context: ctxOpts, map, route: routeMode = "click", video,
-                                minConfidence: minConfArg, locate = false, navTimeout } = {}) {
+                                minConfidence: minConfArg, locate = false, navTimeout, startCheck } = {}) {
   base = (flow.base || base || DEFAULT_BASE).replace(/\/$/, "");
   const t0 = performance.now();
   const browser = shared || await chromium.launch({ headless: true });
+  const tBrowser = performance.now() - t0;
   // VIDEO (--video dir): Playwright records the viewport; the step record then carries each step's
   // start time and the target's box, so a replay can show what was clicked and when. The video is
   // what the browser showed -- typed values included -- so it is written only when asked for.
@@ -584,6 +602,9 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   };
   const echoed = () => [...weakTyped];
   const isOwn = (text) => before.has(norm(text).toLowerCase());
+  let startProf = null, firstSnap = null, startStopped = null, unreachable = null;
+  let specIssued = 0, specUsed = 0;   // PERF: speculative decisions (see speculate)
+  const specOpen = new Set();          // early calls not used (yet): their cost is added at run end
   let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null, absentHit = null;
   // v0.3 SIDE-EFFECT GUARD: an action the engine picks below this confidence is not executed; it
   // counts as BLOCKED (measured: a refusal test paid at 0.22 once the browser blocked the form).
@@ -611,7 +632,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     // v0.4: a slow site needs more than Playwright's 30 s (the-internet's assets stalled ~29 s).
     const nav = flow.navTimeout ?? navTimeout;
     if (nav) page.setDefaultNavigationTimeout(nav);
-    await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" });
+    const tCtx = performance.now() - t0;
+    try { await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" }); }
+    catch (e) { unreachable = String(e.message || e).split("\n")[0]; throw e; }
+    if (PROF) startProf = { browser: Math.round(tBrowser), context: Math.round(tCtx - tBrowser), goto: Math.round(performance.now() - t0 - tCtx) };
     // v0.4 AUTH: a flow that brings a login (storageState) but lands on a sign-in page has a missing or
     // expired session. Stop now with a reason; the skill test burned 17 runs' steps on the sign-in page.
     const startPath = new URL(base + (flow.start || "/")).pathname;
@@ -622,6 +646,83 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     }
     // MAP (v1): with a discovered map, Jev first picks the page where the work begins and code
     // walks there. The step loop below then only makes local choices. See src/route.mjs.
+    // The decision space of one snapshot, before any tournament. Pure: reads the run state, changes none.
+    const spaceFor = (snap) => {
+      const here = new URL(snap.url).pathname;
+      const stuckLabels = new Set([...stuck].filter((k) => k.startsWith(here + "|")).map((k) => k.split("|").slice(2).join("|")));
+      const keyOf = (label, role) => stuckLabels.has(label) ? null : keyFor(label, flow.inputs, role) ?? keyMap.get(label) ?? null;
+      return compact(snap, budget, filled, flow.inputs, 3, keyOf, flow.goal, typedKeys, never);
+    };
+    // The history shown to the model must agree with the page: a field offered for typing again
+    // (it was emptied by a reload) is NOT "typed". Measured on the D1 repro: with the stale
+    // "typed Email" line the model answered BLOCKED on a page with two empty required fields.
+    const historyFor = (space) => {
+      const retype = new Set(Object.values(space.targets.TYPE_TEXT || {}).map((a) => `typed ${a.label}`));
+      return history.filter((h) => !retype.has(h));
+    };
+    // FIX (2026-09-21): while a modal listbox/menu is open, its options are the ONLY legal
+    // moves -- which is why the snapshot can see nothing else. Offering WAIT/DONE/BLOCKED here
+    // makes the model take the escape hatch: measured DONE@0.90, and BLOCKED@0.9997 when DONE
+    // was removed. Removing the bad options (rather than instructing against them) gives
+    // CLICK@1.00. Same principle as finding #2 in the README.
+    const addMeta = (space, listboxOpen) => {
+      if (listboxOpen) return;
+      space.criteria.WAIT = "wait for the page";
+      // No DONE option. The goal is checked deterministically on EVERY snapshot before this decision,
+      // so when the model is asked, "done" is false by construction; offering it only created a
+      // failure mode (Jev 27/30 from false DONEs in the spike; the local engine answered DONE four
+      // times in a row on late-enable.html and card-year.html). Take the bad option away.
+      // BLOCKED ("nothing can progress") is false by definition while a value from the spec is still
+      // waiting to be typed or chosen on this page -- that IS progress -- so it is offered only when
+      // no such action exists.
+      const specWork = Object.keys(space.criteria).some((k) => k.startsWith("TYPE_TEXT:") || k.startsWith("SELECT:"));
+      if (!specWork) space.criteria.BLOCKED = "nothing can progress";
+    };
+    // PERF: SPECULATIVE DECISION. settle() waits for the DOM to be quiet for 150 ms after the action,
+    // and the engine call (~300 ms) waits for settle(). The loop now snapshots BEFORE settle(), starts
+    // the engine call on that snapshot, settles, snapshots again, and uses the early answer only when
+    // the engine input built from the settled snapshot is byte-identical (decisionKey). Otherwise the
+    // early answer is discarded and the settled snapshot is decided as before. Only runs where the
+    // input is a pure function of the snapshot speculate: no declared redaction (it reads the page),
+    // no weak secrets (echo detection keeps per-snapshot history), no field that needs resolveKeys
+    // (an engine call that changes keyMap), no tournament.
+    // Not on `local`: local-engine/server.py answers one request at a time, so a discarded early call
+    // delays the real one by a whole inference (review 2026-10-06).
+    const canSpeculate = SPECULATE && engine !== "local" && !weak.length && !flow.redact?.length;
+    const needsResolve = (snap) => flow.inputs && snap.actions.some((a) => a.kind === "fill" && !keyMap.has(a.label)
+      && keyFor(a.label, flow.inputs, a.role) === null);
+    const speculate = async (i) => {
+      let s0;
+      try { s0 = await page.evaluate(`(${SNAPSHOT})()`); } catch { return null; }
+      if (httpStatus || needsResolve(s0)) return null;
+      // A snapshot where the run is already over is not worth an engine call.
+      if (flow.expectAbsent?.length && await absentSeen(page, flow)) return null;
+      if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, s0)) return null;
+      const sp = spaceFor(s0);
+      if (sp.dropped > 0) return null;
+      addMeta(sp, sp.all.some((r) => r.a.popup));
+      const goal = redactGoal(flow.goal, flow.inputs, []), hist = historyFor(sp);
+      const key = decisionKey(sp, s0, goal, hist);
+      const pending = decide(sp, s0, goal, hist, engine, flow.inputs, [], flow.redact);
+      pending.catch(() => {});
+      specIssued++; specOpen.add(pending);
+      return { key, pending };
+    };
+    // PERF: START CHECK in the run's own first page load (the CLI's weak() used a second context and a
+    // second load of the start page). `startCheck({ at, weak, absent })` sees the same facts weak()
+    // computed: the assertion on the settled start page with no text recorded before it (weak()'s
+    // __jevSeen was empty, so expectSeen counts only as on-screen text), and expectAbsent text on it.
+    // It returns true to stop the run. The settled snapshot is step 1's snapshot when no map moves the page.
+    if (startCheck && !flow.control) {
+      // No early engine call here: a flow the start check stops must not send page content or cost a call
+      // (review 2026-10-06). Step 1 is decided on this settled snapshot.
+      await settle(page);
+      firstSnap = await page.evaluate(`(${SNAPSHOT})()`);
+      const now = { ...flow, expect: [...(flow.expect || []), ...(flow.expectSeen || [])], expectSeen: undefined };
+      const w = { at: flow.start || "/", weak: await checkGoal(page, now, firstSnap), absent: await absentSeen(page, flow) };
+      if (await startCheck(w)) { outcome = w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION"; startStopped = w; throw Object.assign(new Error("start check"), { startStop: true }); }
+      if (map && routeMode) firstSnap = null;
+    }
     if (map && routeMode) {
       const { pickTarget, findRoute, walk } = await import("./route.mjs");
       const { pattern } = await import("./discover.mjs");
@@ -648,9 +749,18 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       if (flow.maxTimeMs && performance.now() - t0 > flow.maxTimeMs) { outcome = "TIMEOUT"; break; }
       let snap;
       const at = Math.round(performance.now() - t0);
-      await settle(page);
-      try { snap = await page.evaluate(`(${SNAPSHOT})()`); }
-      catch { await page.waitForTimeout(150); snap = await page.evaluate(`(${SNAPSHOT})()`); }
+      const pf = PROF ? {} : null; let tl = performance.now();
+      const lap = PROF ? (k) => { const n = performance.now(); pf[k] = (pf[k] || 0) + (n - tl); tl = n; } : () => {};
+      const reuse = i === 0 && firstSnap;
+      const spec = reuse ? null : canSpeculate ? await speculate(i) : null;
+      lap("speculate");
+      if (reuse) snap = firstSnap;
+      else {
+        await settle(page); lap("settle");
+        try { snap = await page.evaluate(`(${SNAPSHOT})()`); }
+        catch { await page.waitForTimeout(150); snap = await page.evaluate(`(${SNAPSHOT})()`); }
+      }
+      lap("snapshot");
       // FIX (2026-09-21): check the goal on EVERY snapshot, not only when the model claims DONE.
       // Measured on create-campaign: the campaign WAS created at step 17, the model never noticed,
       // and it then clicked away to /team and destroyed its own result -- reported as MAX_STEPS.
@@ -663,6 +773,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         redactSnapshot(snap, r);
         redactUrl = r.url;
       }
+      lap("redact");
       noteWeak(snap);
       // A weak value that is exactly a label on THIS page ("Admin") names that element when the goal
       // says it ("open the Admin page"), so the goal keeps the word here (audit r8, weak-later-page).
@@ -681,33 +792,24 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
       // ATTACK CASES: an `expectAbsent` text on the page means the app ACCEPTED what it must refuse.
       // Stop here: the run is a finding, and wandering on to MAX_STEPS would read as "got lost".
+      lap("weakScrub");
       if (httpStatus) { outcome = "SERVER_ERROR"; break; }
       if ((absentHit = await absentSeen(page, flow))) { outcome = "ABSENT_SEEN"; break; }
       // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
+      lap("absent");
       if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
+      lap("checkGoal");
 
       // FIX (v1, TicketBay D2): a field whose label contains no spec key (a rename: "Email" ->
       // "E-mail") used to be invisible to the test. Jev now picks WHICH spec key belongs in it --
       // a typed choice over the keys, so the text still comes only from the spec. Once per label.
       if (flow.inputs) await resolveKeys(snap, flow.inputs, keyMap, engine, (c) => { cost += c; }, flow.redact);
-      const keyOf = (label, role) => stuckLabels.has(label) ? null : keyFor(label, flow.inputs, role) ?? keyMap.get(label) ?? null;
-      const here = new URL(snap.url).pathname;
-      const stuckLabels = new Set([...stuck].filter((k) => k.startsWith(here + "|")).map((k) => k.split("|").slice(2).join("|")));
-      let space = compact(snap, budget, filled, flow.inputs, 3, keyOf, flow.goal, typedKeys, never);
+      lap("resolveKeys");
+      let space = spaceFor(snap);
+      lap("compact");
       lastHeldBack = space.heldBack;
-      // FIX (2026-09-21): while a modal listbox/menu is open, its options are the ONLY legal
-      // moves -- which is why the snapshot can see nothing else. Offering WAIT/DONE/BLOCKED here
-      // makes the model take the escape hatch: measured DONE@0.90, and BLOCKED@0.9997 when DONE
-      // was removed. Removing the bad options (rather than instructing against them) gives
-      // CLICK@1.00. Same principle as finding #2 in the README.
       const listboxOpen = space.all.some((r) => r.a.popup);
-      // The history shown to the model must agree with the page: a field offered for typing again
-      // (it was emptied by a reload) is NOT "typed". Measured on the D1 repro: with the stale
-      // "typed Email" line the model answered BLOCKED on a page with two empty required fields.
-      const shownHistory = () => {
-        const retype = new Set(Object.values(space.targets.TYPE_TEXT || {}).map((a) => `typed ${a.label}`));
-        return history.filter((h) => !retype.has(h));
-      };
+      const shownHistory = () => historyFor(space);
       // TOURNAMENT (v1). When the page has more candidates than one decision can hold (the budget,
       // then the 52-letter ceiling), the old loop DROPPED the rest -- fixtures/table.html's "Next
       // page" is candidate #63 and was never offered (0/3). Now nothing is dropped: the candidates
@@ -750,22 +852,23 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
           heats.decided = key ? { choice: key, confidence: only.confidence, ms: 0, cost: 0, tokens: 0 } : null;
         }
       }
-      if (!listboxOpen) {
-        space.criteria.WAIT = "wait for the page";
-        // No DONE option. The goal is checked deterministically on EVERY snapshot before this decision,
-        // so when the model is asked, "done" is false by construction; offering it only created a
-        // failure mode (Jev 27/30 from false DONEs in the spike; the local engine answered DONE four
-        // times in a row on late-enable.html and card-year.html). Take the bad option away.
-        // BLOCKED ("nothing can progress") is false by definition while a value from the spec is still
-        // waiting to be typed or chosen on this page -- that IS progress -- so it is offered only when
-        // no such action exists.
-        const specWork = Object.keys(space.criteria).some((k) => k.startsWith("TYPE_TEXT:") || k.startsWith("SELECT:"));
-        if (!specWork) space.criteria.BLOCKED = "nothing can progress";
-      }
+      addMeta(space, listboxOpen);
 
-      const d = heats?.decided ? { ...heats.decided, truncated: false }
-        : await decide(space, snap, redactGoal(flow.goal, flow.inputs, keepWeak), shownHistory(), engine, flow.inputs, [], flow.redact);
+      const goalNow = redactGoal(flow.goal, flow.inputs, keepWeak);
+      let d = null;
+      if (spec) {
+        if (!heats && spec.key === decisionKey(space, snap, goalNow, shownHistory())) {
+          d = await spec.pending.catch(() => null);   // a failed early call is retried below, as before
+          if (d) { specUsed++; specOpen.delete(spec.pending); }
+        }
+        // A discarded early call still cost money: it stays in specOpen and is added at run end.
+      }
+      if (!d) d = heats?.decided ? { ...heats.decided, truncated: false }
+        : await decide(space, snap, goalNow, shownHistory(), engine, flow.inputs, [], flow.redact);
       if (heats) delete heats.decided;
+      if (PROF) { const now = performance.now(); pf.decide = now - tl; tl = now;
+        if (d.prepMs != null) { pf.decidePrep = d.prepMs; pf.decideNet = d.ms; }
+        if (d.net) { pf.ttfb = d.net.ttfb; pf.body = d.net.body; pf.tries = d.net.tries; } }
       // The engine must return one of OUR keys. Anything else is treated as BLOCKED, never acted on.
       if (!(d.choice in space.criteria)) { invalidChoice = d.choice; d.choice = "BLOCKED"; }
       decideMs += d.ms; inferMs += d.inferMs || 0; cost += d.cost;
@@ -834,6 +937,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       }
 
       const before = page.url();
+      if (PROF) tl = performance.now();
       // v0.4: a locator verified on the live page, for --emit (src/locate.mjs). Before the action:
       // after a click the element is often gone.
       if (locate && action) {
@@ -854,7 +958,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         const v = specValue(flow, action, keyMap);
         if (v === null) { step.noSpecValue = true; steps.push(step); outcome = "NO_SPEC_VALUE"; break; }
         step.inputKey = specKey(flow, action, keyMap);   // CODEGEN: the key, never the value
-        try { step.via = await act(page, action, (loc, t) => loc.fill(v, { timeout: t })); }
+        try { step.via = await act(page, action, (loc, t) => loc.fill(v, { timeout: t })); lap("act"); }
         catch {
           // A field that cannot take its value is dropped, not retried: a mapped key is unmapped,
           // and the field is not offered for typing again in this run.
@@ -870,15 +974,17 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         // (demoqa practice form: every later click failed). After typing into a plain field (not an
         // autocomplete, whose menu is the point), close such a popup the way a user does: Tab.
         if (action.role !== "combobox") {
+          lap("act");
           const popupOpen = await page.evaluate(() => [...document.querySelectorAll(
             "[class*=datepicker i], [class*=calendar i], [class*=popper i], [role=dialog][aria-modal=true], [role=grid]")]
             .some((e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e);
               return r.width > 40 && r.height > 40 && cs.visibility !== "hidden" && cs.display !== "none"; })).catch(() => false);
           if (popupOpen) { await page.keyboard.press("Tab").catch(() => {}); step.closedPopup = true; }
+          lap("popupCheck");
         }
       } else if (op === "SELECT") {
         try { step.via = await act(page, { ...action, node: action.selectNode, label: action.selectLabel, role: "combobox" },
-          (loc, t) => loc.selectOption({ label: action.optionLabel }, { timeout: t })); }
+          (loc, t) => loc.selectOption({ label: action.optionLabel }, { timeout: t })); lap("act"); }
         catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
         step.option = action.optionLabel; step.control = action.selectLabel;
         history.push(`selected ${action.label}`);
@@ -893,7 +999,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         history.push(`${op === "HOVER" ? "hovered" : "dragged"} ${action.label}`);
         await page.waitForTimeout(200);
       } else if (op === "CLICK") {
-        try { step.via = await act(page, action, (loc, t) => loc.click({ timeout: t })); }
+        try { step.via = await act(page, action, (loc, t) => loc.click({ timeout: t })); lap("act"); }
         catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
         // FIX (2026-09-21): a link click starts a navigation that has not begun yet when we
         // re-snapshot. READY is true on the OLD page and settle() sees a DOM that is quiet only
@@ -902,6 +1008,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         // burning 10 of 22 steps and failing create-campaign 0/5. Only links pay this wait.
         if (action.role === "link") {
           await page.waitForURL((u) => u.toString() !== before, { timeout: 1200 }).catch(() => {});
+          lap("linkWait");
         }
         history.push(`clicked ${action.label}`);
       } else {
@@ -911,7 +1018,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         ]).catch(() => {});
         history.push("waited");
       }
+      lap("act");
       if (op !== "TYPE_TEXT") await page.waitForFunction(READY, null, { timeout: 4000, polling: 50 }).catch(() => {});
+      lap("readyWait");
+      if (PROF) step.prof = Object.fromEntries(Object.entries(pf).map(([k, v]) => [k, Math.round(v * 10) / 10]));
       step.wallAt = Math.round(performance.now() - t0);
       steps.push(step);
       // v0.4: waiting for a slow page is not a step toward the goal (dynamic loading needed maxSteps 25)
@@ -919,13 +1029,13 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
 
     }
     if (outcome === "UNKNOWN") outcome = "MAX_STEPS";
-  } catch (e) { if (!e.authRequired) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; } }
+  } catch (e) { if (!e.authRequired && !e.startStop) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; } }
 
   const tLoopEnd = performance.now() - t0;
   if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
-  const passed = outcome !== "SERVER_ERROR" && await checkGoal(page, flow);
+  const passed = outcome !== "SERVER_ERROR" && !startStopped && await checkGoal(page, flow);
   // A success marker that appeared after the last step is still a finding, not "got lost".
-  if (!absentHit && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
+  if (!absentHit && !startStopped && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
   // v0.3: say WHY. Per-assertion results always; the rest only when the run failed.
@@ -956,7 +1066,9 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       failedActions: [...new Map(steps.filter((x) => x.stale).map((x) => [`${x.op}|${x.label}`, { op: x.op, label: x.label }])).values()],
       emptyRequired,
     } : {}),
-    tLoopEnd: Math.round(tLoopEnd), tCheck: Math.round(tCheck) };
+    tLoopEnd: Math.round(tLoopEnd), tCheck: Math.round(tCheck),
+    ...(startStopped ? { startCheck: startStopped } : {}), ...(unreachable ? { unreachable } : {}),
+    ...(specIssued ? { speculative: { used: specUsed, wasted: specIssued - specUsed } } : {}), ...(startProf ? { startProf } : {}) };
   // SECURITY (audit): the trace on disk is scrubbed too -- a GET form puts a password in finalUrl.
   rec.weakEchoed = echoed();
   // Labels in the record were scrubbed at the source; a weak value can still sit in a URL's QUERY
@@ -965,6 +1077,9 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     return i < 0 ? u : u.slice(0, i) + scrubText(u.slice(i), flow.inputs, { weakKeys: rec.weakEchoed }); };
   rec.finalUrl = redactUrl(q(rec.finalUrl));
   for (const st of rec.steps) { st.url = redactUrl(q(st.url)); if (st.label) st.label = String(st.label); }
+  // Every early call that was not used still cost money, including one sent on the last step, before
+  // the goal check ended the run (review 2026-10-06: that one was missing from rec.cost).
+  for (const r of await Promise.allSettled([...specOpen])) if (r.status === "fulfilled") rec.cost += r.value?.cost || 0;
   if (trace) fs.writeFileSync(trace, JSON.stringify(scrub(rec, flow.inputs), null, 2));
   return rec;
 }
