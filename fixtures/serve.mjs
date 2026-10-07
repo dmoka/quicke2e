@@ -64,7 +64,9 @@ export function startStatic(port = 8899) {
   })));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows paths, spaces (%20) and symlinks (/tmp -> /private/tmp) never equal the raw file:// string
+// (platform test W7: the README quick try exited silently on Windows).
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   const s = await startStatic(Number(process.argv[2]) || 8899);
   console.log(`fixtures on ${s.base}`);
 }

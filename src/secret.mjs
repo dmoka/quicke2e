@@ -2,7 +2,10 @@
 // A key or a label matching this never has its value sent to an engine or written into a file.
 export const SECRET_SRC = String.raw`pass|pwd|\bpw\b|secret|token|api.?key|access.?key|license.?key|\bpin\b|cvc|cvv|card|iban|otp|2fa|\bssn\b|social.?security|\bauth\b|bearer|credential|private|recovery|mnemonic|seed.?phrase|account.?number|session`;
 export const SECRET = new RegExp(SECRET_SRC, "i");
-export const isSecretKey = (k) => SECRET.test(k || "");
+// "card" means the card NUMBER; the holder's name, and the card type are not secrets (a gift-card code stays secret: it is money)
+// (wave-2 tests E, W5: "name on card" forced an env var in every emitted spec)
+const NOT_SECRET = /(name|holder|owner|type|brand)\b.*card|card.?(holder|owner|name|type|brand)/i;
+export const isSecretKey = (k) => SECRET.test(k || "") && !(/card/i.test(k || "") && NOT_SECRET.test(k || "") && !/(number|no|num|cvc|cvv|pin)\b/i.test(k || ""));
 
 // A STRONG secret (10+ chars, 2+ character classes) cannot be confused with page words, so it is
 // scrubbed fuzzily everywhere. A WEAK one ("admin", "password", "test1234" -- typical seed values) is

@@ -1,5 +1,5 @@
 import { isSecretKey, scrubText } from "../src/secret.mjs";
-import { SEEN_RECORDER, SEEN_TEXT } from "../src/loop.mjs";
+import { SEEN_RECORDER, SEEN_TEXT, SET_SLIDER } from "../src/loop.mjs";
 // codegen: a PASSED run record -> a deterministic Playwright spec.
 //
 // Why this exists: the decision model runs on MLX, which is Apple Silicon only, so a Linux CI
@@ -52,6 +52,7 @@ export function classify(steps) {
     else if (s.op === "DONE" || s.op === "BLOCKED") drop = `${s.op}: meta choice, no interaction`;
     else if (s.stale) drop = "stale: act() resolved nothing, the page never changed";
     else if (s.noSpecValue) drop = "noSpecValue: run aborted here, nothing typed";
+    else if (s.op === "CLOSE") drop = null;   // closes an open list: Escape, no locator needed
     else if (!s.label) drop = "no label: nothing to build a locator from";
     else if (s.op === "TYPE_TEXT" && !s.inputKey) drop = "TYPE_TEXT with no inputKey: re-run the trace on a loop.mjs that records it";
     out.push({ step: s, drop });
@@ -124,6 +125,11 @@ export function locator(s, { page = "page", inputs, weakKeys = [] } = {}) {
 }
 
 function actionLine(s, inputs, weakKeys) {
+  if (s.op === "CLOSE") return `  await page.keyboard.press("Escape");`;
+  // a verified locator that echoes a secret value is not written (as in locator()): fall back
+  const safe = (code) => code && scrubText(code, inputs, { weakKeys }) === code ? code : null;
+  if (s.locator?.code && !safe(s.locator.code)) s = { ...s, locator: undefined };
+  if (s.targetLocator?.code && !safe(s.targetLocator.code)) s = { ...s, targetLocator: undefined };
   const loc = s.op === "HOVER" || s.op === "DRAG" ? null : locator(s, { inputs, weakKeys });
   if (s.op === "SELECT") return `  await ${s.locator?.code || `page.getByRole("combobox", { name: ${q(s.control)}, exact: true })`}.selectOption({ label: ${q(s.option)} });`;
   // audit: `INPUTS.["discount code"]` is a SyntaxError -- bracket access has no dot.
@@ -131,7 +137,11 @@ function actionLine(s, inputs, weakKeys) {
   if (s.op === "HOVER") return s.locator?.code ? `  await ${s.locator.code}.hover();` : `  // HOVER "${s.label}": no verified locator recorded; re-run with --emit`;
   if (s.op === "DRAG") return s.locator?.code && s.targetLocator?.code ? `  await ${s.locator.code}.dragTo(${s.targetLocator.code});`
     : `  // DRAG "${s.label}": no verified locator recorded; re-run with --emit`;
-  if (s.op === "TYPE_TEXT") return `  await ${loc}.fill(${IDENT.test(s.inputKey) ? `INPUTS.${s.inputKey}` : `INPUTS[${q(s.inputKey)}]`});`;
+  const val = IDENT.test(s.inputKey) ? `INPUTS.${s.inputKey}` : `INPUTS[${q(s.inputKey)}]`;
+  if (s.op === "TYPE_TEXT" && s.role === "slider" && s.tag !== "input") return `  await setSlider(${loc}, ${val});`;
+  if (s.op === "TYPE_TEXT" && s.file) return `  await ${loc}.setInputFiles(${val});`;
+  if (s.op === "TYPE_TEXT") return `  await ${loc}.fill(${val});`;
+  if (s.op === "PRESS_ENTER") return `  await ${loc}.press("Enter");`;
   return `  await ${loc}.click();`;
 }
 
@@ -147,19 +157,22 @@ function assertions(flow, waitMs) {
   // only honest source for this number -- it is the one thing that watched the app do the work.
   const t = waitMs ? `, { timeout: ${waitMs} }` : "";
   if (flow.expectUrl)                                   // loop.mjs:206 new RegExp(...).test(url)
-    out.push(`  await expect(page).toHaveURL(new RegExp(${q(flow.expectUrl)})${t});`);
+    out.push(`  await expect(page).toHaveURL(${flow.expectUrl instanceof RegExp ? `new RegExp(${q(flow.expectUrl.source)}, ${q(flow.expectUrl.flags)})` : `new RegExp(${q(flow.expectUrl)})`}${t});`);
   // v0.4: transient text (a toast) is read from the recorder installed before the first page load,
   // the same one the run used. Polling for a visible element missed a 300 ms toast 3/3 (new-user test).
   // v0.4: `expect`, `expectSeen` and `expectAbsent` read the page with the SAME function the run
   // used (src/seen-text.js, whitespace collapsed). body.toContainText joins elements differently:
   // "$7.99 Add to cart Sauce Labs Bike Light" passed in the run and failed on replay (saucedemo).
-  const nrm = (x) => String(x).replace(/\s+/g, " ").trim();
+  // lower case on both sides, as in the run (loop.mjs tnorm: CSS text-transform changes the case)
+  const nrm = (x) => String(x).replace(/\s+/g, " ").trim().toLowerCase();
   for (const w of flow.expectSeen || [])
-    out.push(`  await expect.poll(async () => (await page.evaluate(() => (window.__jevSeen || []).join(" "))) + " " + (await seenText(page))${t}).toContain(${q(nrm(w))});`);
+    out.push(`  await expect.poll(async () => ((await page.evaluate(() => (window.__jevSeen || []).join(" "))) + " " + (await seenText(page))).toLowerCase()${t}).toContain(${q(nrm(w))});`);
   for (const w of flow.expect || [])
-    out.push(`  await expect.poll(() => seenText(page)${t}).toContain(${q(nrm(w))});`);
+    out.push(`  await expect.poll(async () => (await seenText(page)).toLowerCase()${t}).toContain(${q(nrm(w))});`);
+  for (const w of flow.expectGone || [])                // text that must be gone at the end (a deleted row)
+    out.push(`  await expect.poll(async () => (await seenText(page)).toLowerCase()${t}).not.toContain(${q(nrm(w))});`);
   for (const w of flow.expectAbsent || [])              // after the positive checks, so the page has settled
-    out.push(`  expect(await seenText(page)).not.toContain(${q(nrm(w))});`);
+    out.push(`  expect(((await page.evaluate(() => (window.__jevSeen || []).join(" "))) + " " + (await seenText(page))).toLowerCase()).not.toContain(${q(nrm(w))});`);
   for (const w of flow.expectState || []) {             // loop.mjs:192-202 stateOk()
     const role = ARIA[w.role] || w.role;
     const loc = `page.getByRole(${q(role)}, { name: ${q(w.name)}, exact: true })`;
@@ -195,33 +208,45 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
 
   const lines = [];
   lines.push(`// GENERATED from a passed exploratory run -- do not hand-edit; regenerate.`);
-  lines.push(`// flow: ${flow.name}   engine: ${rec.engine}   outcome: ${rec.outcome}   ${rec.steps.length} steps in ${rec.wallMs} ms`);
+  lines.push(`// flow: ${String(flow.name).replace(/[\r\n\u2028\u2029]+/g, " ")}   engine: ${rec.engine}   outcome: ${rec.outcome}   ${rec.steps.length} steps in ${rec.wallMs} ms`);
   lines.push(`// Every locator below is an ACCESSIBLE NAME. A rename in the app breaks this spec --`);
   lines.push(`// that is the intended signal, not a defect: run quicke2e again to re-explore the flow.`);
   lines.push(`import { test, expect } from "@playwright/test";`);
   lines.push(``);
-  lines.push(`const BASE = process.env.APP_BASE ?? ${q(rec.base)};`);
+  lines.push(`const BASE = (process.env.APP_BASE ?? ${q(rec.base)}).replace(/\\/$/, "");`);
   // the text a user sees, exactly as the exploratory run read it (src/seen-text.js)
-  if ((flow.expect?.length || flow.expectSeen?.length || flow.expectAbsent?.length))
+  if ((flow.expect?.length || flow.expectSeen?.length || flow.expectAbsent?.length || flow.expectGone?.length))
     lines.push(`const SEEN_TEXT = ${q(SEEN_TEXT)};`,
       `const seenText = async (page) => String(await page.evaluate(\`(\${SEEN_TEXT})()\`)).replace(/\\s+/g, " ").trim();`);
-  const secretEnvs = Object.keys(flow.inputs || {}).filter(isSecretKey).map((k) => envName(flow.name, k));
+  if (rec.steps.some((st) => st.op === "TYPE_TEXT" && st.role === "slider" && st.tag !== "input"))
+    lines.push(`const setSlider = ${SET_SLIDER};`);
+  const secretKeys = Object.keys(flow.inputs || {}).filter(isSecretKey);
+  const secretEnvs = secretKeys.map((k) => envName(flow.name, k));
   lines.push(`const INPUTS = {`);
   for (const [k, v] of Object.entries(flow.inputs || {}))
     // SECURITY (audit): a secret-looking key gets NO literal default -- the spec reads it from the
     // environment only, so a credential is never written into a generated file.
     lines.push(isSecretKey(k)
-      ? `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)},`
-      : `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)} ?? ${q(v)},`);
+      // a shared QUICKE2E_<KEY> serves every flow (one LOGIN password for 6 specs, wave-2 test W2)
+      ? `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)} ?? process.env.${envName("QUICKE2E", k)},`
+      : `  ${IDENT.test(k) ? k : q(k)}: process.env.${envName(flow.name, k)} ?? process.env.${envName("QUICKE2E", k)} ?? ${q(v)},`);
   lines.push(`};`);
   lines.push(``);
   // v0.4: the run's login travels with the spec (a path only; an inline state may hold session cookies).
-  if (typeof flow.storageState === "string") lines.push(`test.use({ storageState: ${q(flow.storageState)} });`, ``);
+  // the path as the spec wrote it (the CLI may resolve it for the run; an absolute path breaks elsewhere)
+  if (typeof flow.storageState === "string") lines.push(`test.use({ storageState: ${q(flow.storageStateSpec ?? flow.storageState)} });`, ``);
   else if (flow.storageState) lines.push(`// This flow ran with an inline storageState: add test.use({ storageState: "<file>" }) for the login.`, ``);
   lines.push(`test(${q(title)}, async ({ page }) => {`);
   // v0.4: a missing secret skips THIS test only (it used to throw at import and stop every test in the file).
-  for (const e of secretEnvs) lines.push(`  test.skip(!process.env.${e}, ${q(`set ${e}: secret spec values are read from the environment only`)});`);
-  if (flow.expectSeen?.length) lines.push(`  await page.addInitScript(${q(SEEN_RECORDER)});`);
+  // Launch test 2026-10-07: in CI a skip is a green build that tested nothing, so with CI set it fails.
+  for (const k of secretKeys) { const e = envName(flow.name, k), g = envName("QUICKE2E", k), msg = `set ${e} (or ${g}): secret spec values are read from the environment only`;
+    lines.push(`  if (!process.env.${e} && !process.env.${g}) { if (process.env.CI) throw new Error(${q(msg)}); test.skip(true, ${q(msg)}); }`); }
+  // the recorder also for expectAbsent: the run checks it on every snapshot, so the replay must catch a
+  // text that showed for 700 ms too (wave-2 test W2: "Promo applied" flashed; the replay passed 5/5)
+  if (flow.expectSeen?.length || flow.expectAbsent?.length) lines.push(`  await page.addInitScript(${q(SEEN_RECORDER)});`);
+  // a same-origin 5xx (page or fetch/XHR) fails the replay as it fails the run
+  if (!flow.allowServerErrors) lines.push(`  const serverErrors = [];`,
+    `  page.on("response", (r) => { try { if (r.status() >= 500 && ["document", "fetch", "xhr"].includes(r.request().resourceType()) && new URL(r.url()).origin === new URL(BASE).origin) serverErrors.push(\`\${r.status()} \${r.request().method()} \${new URL(r.url()).pathname}\`); } catch {} });`);
   // v0.4: the run accepted (or dismissed) native dialogs; the replay must do the same, not Playwright's dismiss.
   if (rec.dialogs?.length) {
     const promptKey = rec.dialogs.find((d) => d.inputKey)?.inputKey;
@@ -264,6 +289,7 @@ export function generate(rec, flow, { title = flow.name, dropCandidates = [] } =
   const lastActed = [...rec.steps].reverse().find((s) => s.wallAt != null);
   const leg = lastActed ? Math.max(0, (rec.tLoopEnd ?? rec.wallMs) - lastActed.wallAt) : 0;
   for (const a of assertions(flow, Math.max(5000, Math.round(leg * 3 / 500) * 500))) lines.push(a);
+  if (!flow.allowServerErrors) lines.push(`  expect(serverErrors, "server errors (HTTP 5xx) during the flow").toEqual([]);`);
   lines.push(`});`);
   lines.push(``);
   // The sidecar: everything needed to RE-EXPLORE this flow when the spec breaks. The spec is

@@ -77,14 +77,17 @@ export async function verifiedLocator(page, selector) {
     if (attrs.label) tries.push([`page.getByLabel(${q(attrs.label)}, { exact: true })`, "label"]);
     if (attrs.ph) tries.push([`page.getByPlaceholder(${q(attrs.ph)}, { exact: true })`, "placeholder"]);
     if (attrs.tid) tries.push([`page.locator(${q(`[data-testid="${attrs.tid}"],[data-test="${attrs.tid}"]`)})`, "testid"]);
+    // 3b. a control with a role but no accessible name (antd's slider handle): the role alone, when unique
+    const unnamed = aria?.role && !aria.name && aria.role !== "generic" ? `page.getByRole(${q(aria.role)})` : null;
+    if (unnamed) tries.push([unnamed, "role"]);
     for (const [code, how] of tries) if (await uniqueAndSame(page, code, handle)) return { code, how };
     // 4. position among the role matches
-    if (aria?.role && aria.name) {
-      const all = build(page, tries[0][0]);
+    if ((aria?.role && aria.name) || unnamed) {
+      const all = build(page, aria.name ? tries[0][0] : unnamed);
       const n = await all.count().catch(() => 0);
       for (let i = 0; i < n && i < 50; i++) {
         const same = await all.nth(i).evaluate((el, h) => el === h, handle).catch(() => false);
-        if (same) return { code: `${tries[0][0]}.nth(${i})`, how: "nth" };
+        if (same) return { code: `${aria.name ? tries[0][0] : unnamed}.nth(${i})`, how: "nth" };
       }
     }
     return null;

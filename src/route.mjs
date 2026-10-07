@@ -83,15 +83,18 @@ export function findRoute(map, fromUrl, toUrl) {
 }
 
 // Walk the route by role + label, like a user. Falls back to a direct goto if a hop fails.
-export async function walk(page, route, target) {
+export async function walk(page, route, target, never = null) {
   const hops = [];
   for (const e of route || []) {
     if (e.via.op === "redirect") continue;
     const before = page.url();
     try {
       const role = ARIA[e.via.role] || "link", name = e.via.label;
-      try { await page.getByRole(role, { name, exact: true }).first().click({ timeout: 1500 }); }
-      catch { await page.getByRole(role, { name }).first().click({ timeout: 1500 }); }
+      // neverClick applies to map hops too, and a hop clicks only a unique match (security test W6)
+      if (never && never(name)) throw new Error("neverClick");
+      const one = async (loc) => { if ((await loc.count()) !== 1) throw new Error("not unique"); return loc; };
+      try { await (await one(page.getByRole(role, { name, exact: true }))).click({ timeout: 1500 }); }
+      catch { await (await one(page.getByRole(role, { name }))).click({ timeout: 1500 }); }
       await page.waitForURL((u) => u.toString() !== before, { timeout: 3000 }).catch(() => {});
       await settle(page);
       hops.push({ role, label: e.via.label, ok: true });

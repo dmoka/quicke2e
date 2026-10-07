@@ -40,13 +40,15 @@
     "codegen/codegen.mjs",
     "skill",
     "README.md",
+    "AGENTS.md",
+    "llms.txt",
     "LICENSE"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/core.test.mjs test/route.test.mjs",
     "fixtures": "node fixtures/run.mjs --checkout ."
   },
   "dependencies": {

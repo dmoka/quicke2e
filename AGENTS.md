@@ -42,10 +42,12 @@ Flow fields:
 | `base` | no | base URL for this flow. Order: `base`, then `--base`, then `$APP_BASE`, then `http://localhost:3000` |
 | `inputs` | no | `{ "<words from the field label>": "<value>" }` |
 | `expectUrl` | no | a JavaScript regex string, tested against the **full** final URL, unanchored. Escape `.` and `?` |
-| `expect` | no | array of strings. Each must appear in the text a user sees on the page, as a substring, case-sensitive, after whitespace is collapsed. Form control values do not count |
+| `expect` | no | array of strings. Each must appear in the text a user sees on the page, as a substring, ignoring case (CSS `text-transform` changes case), after whitespace is collapsed. Form control values do not count. A test of case handling (an email normalized to lower case) needs `expectState` on the field or an `expectUrl` |
 | `expectSeen` | no | like `expect`, but passes if the text appeared at any moment since the page loaded (toasts) |
 | `expectState` | no | array of `{ role, name, value, selected, checked, expanded }`; every given key must match one control. `name` = the control's label (exact), `value` = substring |
-| `expectAbsent` | no | array of strings that must NOT appear in the text a user sees (same matching as `expect`). When one appears, the run stops with outcome `ABSENT_SEEN` and fails |
+| `expectAbsent` | no | array of strings that must NOT appear in the text a user sees (same matching as `expect`), at any moment of the run. When one appears, the run stops with outcome `ABSENT_SEEN` and fails. It must not be on the start page |
+| `expectGone` | no | array of strings that must NOT be visible at the end. Unlike `expectAbsent`, they may be on the start page: use it for a delete (`expectGone: ["Temp task"]`) |
+| `allowServerErrors` | no | `true`: a same-origin HTTP 5xx (page or fetch/XHR) does not fail the run. Default: it fails with `SERVER_ERROR` |
 | `control` | no | a path where the app says yes (the user's own order). The `WEAK_ASSERTION` check loads it instead of `start`, and the run checks the assertion on the start page before any step. Use it when loading `start` is the attack |
 | `kind` | no | a label copied into the run record and the output line. Use `"attack"` for attack specs |
 | `redact` | no | array of CSS selector strings and `RegExp` objects (`/recovery code \S+/i`) |
@@ -84,7 +86,9 @@ Rules:
    (checked, selected, disabled). `expect` reads only text a user sees, not form control values.
 5. **In a refusal test, block the success action with `neverClick`** (`neverClick: ["Pay*"]`). If the
    app does not refuse (or the browser blocks the form first), the run fails without paying, buying or
-   deleting. A refusal spec without it can trigger the side effect it is testing against.
+   deleting. A refusal spec without it can trigger the side effect it is testing against. Exception:
+   when the app refuses ON that click (a server check behind "Place order"), do not list it; a failed run
+   with `neverHidden` tells you this happened.
 6. **A dropdown takes its value from `inputs` too**: key = words from the dropdown's label, value = the
    option's visible text (`country: "Hungary"`). A required dropdown with no key is left unset.
 7. **Put content the engine must never see in `redact`** (CSS selectors or `/regex/` patterns).
@@ -138,7 +142,9 @@ repeats each flow.
 
 - **Exit code:** `0` = every run passed; `1` = a run failed, a spec failed the `WEAK_ASSERTION`
   or `ABSENT_ON_START` check, or a start page was unreachable (line `UNREACHABLE <name>: <url> (...). Is the app running?`);
-  `2` = usage error.
+  `2` = usage error, an invalid spec (wrong field type, unknown field, no assertion), or an API key the
+  engine rejected (the run stops at the first flow: `stopped: the engine rejected the API key`);
+  `3` = every failure was `ENGINE_ERROR` (engine timeout, 429/5xx): retry, it says nothing about the app.
 - **Human output:** one line per run, `PASS|FAIL  <name>  <steps> steps  <seconds>s  $<cost>  <outcome>`,
   then `saw "<text>"` after an `ABSENT_SEEN`, `HTTP <status>` after a `SERVER_ERROR`, and `(<kind>)` when
   the spec has a `kind`.
@@ -148,18 +154,20 @@ repeats each flow.
 |---|---|---|
 | `flow` | string | the spec's `name` |
 | `passed` | boolean | the final assertion check: the result to trust |
-| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action, or only picks under `minConfidence`, three times on an unchanged page), `LOOP` (the same action ran 3 times on an unchanged page), `AUTH_REQUIRED` (the flow's `storageState` session is missing or expired: the start page redirected to sign-in), `TIMEOUT` (`maxTimeMs` ran out), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `ERROR` (see `error`). Flows that never ran: `UNREACHABLE`, `WEAK_ASSERTION`, `ABSENT_ON_START` (and `OK` from `check`) |
+| `outcome` | string | why the loop stopped: `DONE_VERIFIED` (all assertions held on a snapshot; the model has no "done" option), `ABSENT_SEEN` (an `expectAbsent` text appeared: the app accepted what it must refuse), `SERVER_ERROR` (a page navigation answered with HTTP 5xx; the run fails), `MODEL_BLOCKED` (the engine found no useful action, or only picks under `minConfidence`, three times on an unchanged page), `LOOP` (the same action ran 3 times on an unchanged page), `AUTH_REQUIRED` (the flow's `storageState` session is missing or expired: the start page redirected to sign-in), `TIMEOUT` (`maxTimeMs` ran out), `NO_SPEC_VALUE`, `MAX_STEPS` (step limit reached), `WEAK_ASSERTION` (the assertions held before the run executed any action: the spec proves nothing), `NOT_REFUSED` (a `control` load attack: the start page did not show the refusal; the run never acts on it), `ENGINE_ERROR` (the engine failed: timeout, 429/5xx, rejected key; not an app failure), `ERROR` (see `error`). Flows that never ran: `UNREACHABLE`, `WEAK_ASSERTION`, `ABSENT_ON_START`, `RESET_FAILED` (and `OK` from `check`); their records have the same fields with `steps: []` and `assertions: []` |
 | `assertions` | array | one entry per assertion: `{ kind, value, held, actual? }` on the final page. Read this first on a failure |
 | `heldBack` | array | on a failure: submits that were hidden because a spec field was unset: `{ label, waitingFor, key }` |
 | `loop`, `lowConfidence`, `failedActions`, `emptyRequired` | | on a failure: the repeated action, the best pick under `minConfidence`, actions that threw, required fields still empty |
+| `pageErrors`, `unusedInputs`, `unkeyedFields`, `unmatchedOptions`, `networkErrors`, `apiError` | | on a failure: what the page says is wrong (`role=alert`, `aria-live`, `aria-invalid` text); spec keys no field used (also on a pass); visible fields with no spec key; a select value that matches no option (with the options); failed requests (the app stopped?); the same-origin request that answered 5xx |
+| `coveredBy`, `neverHidden`, `startStatus` | | on a failure: `{ label, by }` when another element (a cookie banner) lay over a click target; elements `neverClick` kept from the engine; the start page's HTTP status when it was 4xx (401: a login is needed) |
 | `dialogs` | array | native dialogs the run handled: `{ type, message, action, inputKey? }` |
 | `slowSteps` | array | actions that took over 3 s from decision to a settled page: `{ n, op, label, ms }` (also on a pass) |
-| `error` | string or null | the error message when `outcome` is `ERROR` |
+| `error` | string or null | the error message with `ERROR`, `ENGINE_ERROR`, and a skipped flow's reason |
 | `absentSeen` | string | only with `ABSENT_SEEN`: the `expectAbsent` text that appeared |
 | `httpStatus` | number | only with `SERVER_ERROR`: the 5xx status |
 | `kind` | string | only when the spec has a `kind` |
 | `finalUrl` | string | the URL when the run ended |
-| `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |
+| `steps` | array | one entry per decision: `n`, `op` (`CLICK`, `TYPE_TEXT`, `SELECT`, `PRESS_ENTER`, `HOVER`, `DRAG`, `CLOSE` (Escape on an open list), `WAIT`, `BLOCKED`), `label` (the element), `url`, `confidence`, `ms` (decision time) |
 | `wallMs` | number | total run time in ms |
 | `cost` | number | engine cost in USD (`0` on `local`), including early decisions that were discarded |
 | `engine` | string | `jev`, `vercel` or `local` |

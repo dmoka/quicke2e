@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
-    <img alt="QuickE2E" src="docs/logo.svg" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dmoka/quicke2e/main/docs/logo-dark.svg">
+    <img alt="QuickE2E" src="https://raw.githubusercontent.com/dmoka/quicke2e/main/docs/logo.svg" width="420">
   </picture>
 </p>
 
@@ -29,7 +29,7 @@
 <br>
 <br>
 
-![QuickE2E with the local Shisa DE-1 model buys two tickets with a discount code on TicketBay, from the home page, in 2.9 seconds](docs/demo.gif)
+![QuickE2E with the local Shisa DE-1 model buys two tickets with a discount code on TicketBay, from the home page, in 2.9 seconds](https://raw.githubusercontent.com/dmoka/quicke2e/main/docs/demo.gif)
 
 *Recorded at 1× speed with the `local` engine (Shisa DE-1). Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
 
@@ -77,9 +77,14 @@ Requires Node 20 or later.
 **1. Install** (`@playwright/test` runs the Playwright specs that `--emit` writes):
 
 ```bash
-npm i -D quicke2e @playwright/test && npx playwright install chromium
-export OPENROUTER_API_KEY=...        # the default jev engine calls OpenRouter; --engine local needs no key
+npm i -D quicke2e @playwright/test
+npx playwright install chromium
+export OPENROUTER_API_KEY=...        # https://openrouter.ai/keys; the default jev engine calls OpenRouter
 ```
+
+On Windows PowerShell: `$env:OPENROUTER_API_KEY = "..."`; in cmd: `set OPENROUTER_API_KEY=...` (the same for
+`APP_BASE` and the `<FLOW>_<KEY>` variables of emitted specs). The `local` engine (no key) runs on Apple
+Silicon only. In Git Bash, set `MSYS_NO_PATHCONV=1` before passing a path such as `--start /admin`.
 
 **2. Write a spec.** Save the example from the top of this page as `quicke2e.spec.mjs` and change
 `start`, `goal`, `inputs` and the assertions to one flow of your app. Assert the page after the last
@@ -114,7 +119,7 @@ npx quicke2e run examples/fixtures.spec.mjs --base http://127.0.0.1:8899
 ### On your own app
 
 ```bash
-npx quicke2e discover http://localhost:3000 -o quicke2e.map.json      # map the app (once, no model)
+npx quicke2e discover http://localhost:3000 -o quicke2e.map.json      # map the app (once, no model; it submits forms: use a throwaway DB, or --safe)
 npx quicke2e check quicke2e.spec.mjs --base http://localhost:3000    # reject weak assertions
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --map quicke2e.map.json
 npx quicke2e run   quicke2e.spec.mjs --base http://localhost:3000 --emit e2e/generated/   # -> Playwright spec
@@ -173,13 +178,16 @@ Code decides success. It checks the assertions on every snapshot:
 | assertion | passes when |
 |---|---|
 | `expectUrl` | the URL matches this regex |
-| `expect` | a sighted user sees this text on the page. Hidden, `aria-hidden`, transparent, clipped and off-page text does not count. The values of form controls do not count, because the test typed or chose them |
+| `expect` | a sighted user sees this text on the page, ignoring case (CSS `text-transform` changes it). Hidden, `aria-hidden`, transparent (`color`), clipped (by a parent's overflow or `clip-path`), scaled-to-nothing and off-page text does not count; text a user can scroll to does. The values of form controls do not count, because the test typed or chose them |
 | `expectState: [{ role, name, value \| checked \| selected }]` | a control has this state (a chosen option, a checked box, a field's value) |
 | `expectSeen` | this text appeared at any moment since the page loaded, such as a toast |
-| `expectAbsent` | a sighted user does NOT see this text. When it appears, the run stops with outcome `ABSENT_SEEN` and fails |
+| `expectAbsent` | a sighted user does NOT see this text. When it appears, the run stops with outcome `ABSENT_SEEN` and fails. It must not be on the start page (`ABSENT_ON_START`) |
+| `expectGone` | this text is NOT visible at the end. It may be on the start page: use it for a delete (`goal: "Delete the task Temp task"`, `expectGone: ["Temp task"]`) |
 
 The run stops on the first snapshot where all assertions hold, and that run passes. Write the assertions
-for the state after the last action: after a submit, assert the page the submit leads to.
+for the state after the last action: after a submit, assert the page the submit leads to. A run that
+reaches its assertions without executing any action fails with `WEAK_ASSERTION`: the page got there by
+itself (a single-page app rendered its " * Required" footnote after a spinner), so it proves nothing.
 
 ### Text comes from the spec
 
@@ -188,9 +196,18 @@ a label contains no key (a renamed label such as "E-mail" or "Ticket holder"), t
 of your unused keys belongs there. That pick is a choice over your keys, so the value still comes only
 from the spec. QuickE2E never maps a key into a number, date or file field this way.
 
+A file input takes a file path from `inputs` (relative to the folder you run in), or a list of paths for
+a multi-file input: `inputs: { avatar: "fixtures/me.png" }`. A hidden file input behind a drop zone is
+used too. A value of only spaces (`"   "`) is typed as it is: use it to test that a required field
+rejects blanks. A field that holds its spec value and has no submit button in its form is offered
+`PRESS_ENTER` (a todo input, a search box, a chat input). A slider (`<input type=range>` or
+`role=slider`) takes a number from `inputs`. When a button cannot be clicked because something lies over
+it (a cookie banner, a newsletter popup), the engine is told what covers it and can close that first.
+
 ### `WEAK_ASSERTION`
 
-`run` and `check` first load the start page. If the assertion already holds before any step, QuickE2E
+`run` and `check` first load the start page and wait until no fetch/XHR request is in flight (up to 3 s),
+so text the page loads by itself is on screen. If the assertion already holds before any step, QuickE2E
 rejects the spec with `WEAK_ASSERTION`, because an assertion that is true on page load passes without
 any work. A spec with `control` is checked on the control page instead (see [Attack cases](#attack-cases)).
 An `expectAbsent` text that is already on the start page fails the check with `ABSENT_ON_START`.
@@ -207,7 +224,9 @@ passing run meant. Native dialogs, Escape presses, hover and drag replay the sam
 `storageState` becomes `test.use({ storageState })`. Measured on saucedemo.com: 9 of 9 emitted specs replay. Each input is read from an environment variable named
 `<FLOW>_<KEY>` (for example `CHECKOUT_PLAIN_EMAIL`). A non-secret input falls back to the spec value. A
 secret input has no fallback, so the credential is never written into the file: without the variable,
-that one test is skipped with a message.
+that one test is skipped with a message, and fails when `CI` is set (a skipped test would make a green
+build that tested nothing). Credentials in the base URL (`http://user:pass@host`) are never written into
+a record, a trace or an emitted spec.
 
 ## Attack cases
 
@@ -412,7 +431,7 @@ are from 2026-09-24, the `local` column from 2026-09-28.
 
 ### Fixture suite
 
-`fixtures/` holds 59 small hand-written pages, run at n=3. Each page is a defect found in the field or
+`fixtures/` holds 74 fixture cases on 73 small hand-written pages, run at n=2. Each page is a defect found in the field or
 an attack from the project's ten-round security and robustness audit: shadow DOM, iframes, toasts,
 secret echoes (re-cased, truncated, grouped, URL-encoded, weak), declared redaction through shadow
 roots and iframes, hidden-text false passes, a 150-link page, a safe crawl.
@@ -494,7 +513,8 @@ quicke2e discover <baseUrl> [--start /,/admin] [--safe] [--i-own-this-data] [--r
                             [--redact ".css-selector" --redact "/regex/i" ...] [--headed|--headless]
 quicke2e run <spec.mjs> [--base url] [--engine jev|local|vercel] [--map quicke2e.map.json]
                         [--runs N] [--emit dir] [--trace dir] [--video dir] [--headed|--headless]
-                        [--allow-weak] [--only name]
+                        [--allow-weak] [--only name[,name]] [--json] [--reset "<cmd>"]
+                        [--min-confidence n] [--nav-timeout ms]
 quicke2e check <spec.mjs> [--base url]
 ```
 
@@ -531,6 +551,7 @@ quicke2e check <spec.mjs> [--base url]
 | `LOCAL_URL` | URL of the local engine server (default `http://127.0.0.1:8822`) |
 | `APP_BASE` | default `--base` |
 | `QUICKE2E_SPECULATE=0` | turn off early decisions (see [Decide](#2-decide)) |
+| `QUICKE2E_ENGINE_TIMEOUT_MS` | per-request engine timeout (default 30000); a timed-out request is retried up to 4 times |
 | `QUICKE2E_PROF=1` | add per-step timings (settle, snapshot, decide, act) to each run record |
 | `JEV_DEBUG=1` | print the page state and the options of every decision to stderr |
 
@@ -548,14 +569,14 @@ A spec file exports an array of flows (`export default [...]`).
 | `base` | base URL for this flow; overrides `--base` |
 | `goal` | the task in plain English |
 | `inputs` | every value the run types, keyed by field label |
-| `expectUrl`, `expect`, `expectState`, `expectSeen`, `expectAbsent` | the assertions (see [Verify](#3-verify)) |
+| `expectUrl`, `expect`, `expectState`, `expectSeen`, `expectAbsent`, `expectGone` | the assertions (see [Verify](#3-verify)). `expectUrl` is a regex: escape `?` and `.` (`"/login\\?welcome=1"`) |
 | `control` | a path where the app says yes; the `WEAK_ASSERTION` check loads it instead of `start` (see [Attack cases](#attack-cases)) |
 | `kind` | a label for the run record and the output line, such as `"attack"` |
 | `redact` | CSS selectors and text patterns the engine must never see |
 | `storageState` | Playwright storage state for the browser context |
 | `maxSteps` | step limit (default 14) |
 | `neverClick` | elements the engine is never offered: case-insensitive globs over the whole label (`"Pay*"`, `"*delete*"`) or RegExps. Use it in refusal tests so a failed refusal cannot buy, pay or delete |
-| `minConfidence` | an action the engine picks below this confidence is not executed and counts as BLOCKED (default 0.3, or `--min-confidence`) |
+| `minConfidence` | a click the engine picks below this confidence is not executed and counts as BLOCKED (default 0.3, or `--min-confidence`). Typing a spec value or choosing the option the spec names is not gated |
 | `dialog` | `"accept"` (default) or `"dismiss"` for native `confirm`/`alert`/`prompt` dialogs; a prompt gets the spec value whose key its message names |
 | `navTimeout` | page-load timeout in ms (default 30000, or `--nav-timeout`) |
 | `maxTimeMs` | time budget for the run; when it runs out, the outcome is `TIMEOUT` |
@@ -579,6 +600,10 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 | `LOOP` | the same action ran 3 times on a page that did not change; the 4th was not executed |
 | `AUTH_REQUIRED` | the flow has a `storageState`, but the start page redirected to a sign-in page: the session is missing or expired |
 | `TIMEOUT` | the flow's `maxTimeMs` ran out |
+| `WEAK_ASSERTION` | the assertions held before the run executed any action (or, before the run, on the start page) |
+| `NOT_REFUSED` | a `control` flow (a load attack): the start page did not show the refusal. The run never acts on a load attack |
+| `ENGINE_ERROR` | the engine failed (no answer in 30 s after 4 tries, HTTP 429/5xx, a rejected key). Not an app failure. A rejected key (401/403) stops the whole run with exit code 2 |
+| `RESET_FAILED` | the `--reset` command exited with an error; the flow did not run |
 | `ERROR` | the run threw an error |
 
 </details>
@@ -587,7 +612,24 @@ The outcome says why the run loop stopped. Pass or fail comes from the final ass
 
 - **QuickE2E checks only the assertions in the spec.** A green run proves those assertions and nothing else about the app.
 - **Use the emitted Playwright spec as the CI merge gate.** A model-driven run can take a different path on the next run.
-- **Tested stacks:** the eight above plus TicketBay, saucedemo.com (React), practicesoftwaretesting.com (Angular), demoqa.com and the-internet. Not tested: canvas apps, cross-origin iframes (Stripe Elements), closed shadow roots, native mobile.
+- **Emitted specs share your app's data.** `quicke2e run --reset` restores the data before each flow; the emitted specs do not. A flow that creates data (a signup, a new item) replays once per data reset, and its emitted spec keeps the run's values (an email made with `Date.now()` is written into the file). Reset the data before `npx playwright test`, and set `<FLOW>_<KEY>` (for example `SIGNUP_EMAIL`) to a fresh value per CI run. The spec module is loaded once per `quicke2e run`, so `--runs 2` reuses the same generated values.
+- **Tested stacks:** the eight above plus TicketBay, saucedemo.com (React), practicesoftwaretesting.com (Angular), demoqa.com, the-internet, OWASP Juice Shop, OrangeHRM, ParaBank, restful-booker, TodoMVC, and MUI, Ant Design, shadcn/Radix, Mantine, Headless UI and Chakra components.
+- **Not supported:** canvas apps, closed shadow roots and cross-origin iframes (Stripe Elements) offer no actions; flows across tabs (`target=_blank`, `window.open`) stay in the first tab; there is no browser Back action; native mobile.
+- **A run stops at a hard deadline:** `maxTimeMs` + 5 s, or 180 s by default (`QUICKE2E_RUN_TIMEOUT_MS`). A page script in an endless loop ends with `TIMEOUT`.
+- **Not offered:** elements with only a JavaScript click handler and no role (a TanStack Table header made of `<span onClick>`, a Recharts legend item), buttons that appear only on hover (data-grid column menus), single grid cells for inline editing, dnd-kit drag and drop, a row of single-digit OTP boxes with one spec value (give each box its own key: `"digit 1"` ... `"digit 6"`).
+- **Field arrays:** adding repeated rows ("Add line item") can loop: the engine adds rows past the ones the spec fills.
+- **Long and lazy lists:** there is no SCROLL action. Infinite scroll and virtualized lists (TanStack Virtual, react-window) show only the rendered rows. Above 40 identical buttons ("Delete" on every row) the row context is dropped: give the goal a search step, or put a search value in `inputs`.
+- **Rich-text and code editors** (Quill, CodeMirror, Monaco) are typed into only when an `inputs` key matches the editor's computed label; `--trace` shows that label in `offered`. TipTap works.
+- **Date pickers that open only from a text field and commit only on Enter** (Ant Design) cannot be set yet. MUI, react-day-picker, Mantine and Chakra pickers work. In a range picker, name each day as its label reads ("click 10 November 2026, then click 12 November 2026").
+- **Handlers attached late:** a page that attaches its click handlers well after the `load` event (a timer, not a script bundle) gets clicks that do nothing; the run then stops with `LOOP`.
+- **Text under an opaque overlay still counts** for `expect` (there is no occlusion check).
+- **A dialog the goal does not mention** (a welcome guide, a tour): while an `aria-modal` dialog is open, only its controls are offered. Name it in the goal ("Close the welcome guide, then ..."), or close it once in your login script.
+- **TinyMCE** (its editable body sits in an iframe) is not typed into; Gutenberg and TipTap work.
+- **A full `discover` crawl can delete or log out the signed-in user** (it submits every form). Use `--safe` on an app with real accounts, or reset and log in again before you run.
+- **`--reset` runs in `cmd.exe` on Windows and `/bin/sh` elsewhere.** A `.sh` reset script needs Git Bash or WSL on Windows.
+- **`storageState` carries cookies and `localStorage`, not `sessionStorage`** (a Playwright limit). An app that keeps the session or cart in `sessionStorage` (Juice Shop's basket) needs a login inside the flow.
+- **Two forms on one page with the same field labels** (a sidebar login next to a register form) can take a value in the wrong form. Name the form in the goal, or test the page that has one form.
+- **Pages that keep loading** (a polling dashboard) wait at most 3 s before the start check.
 - **Hover and drag are offered only for recognisable patterns.** HOVER: an element whose container holds hidden text (a caption, a tooltip). DRAG: elements marked draggable or named "drag" onto drop zones named "drop". Custom drag libraries with other markup are not detected.
 - **Native dialogs are accepted by default** (`dialog: "dismiss"` flips it); a `prompt` takes the spec value whose key its message names. Block a destructive action in a refusal test with `neverClick`.
 - **The step count can vary.** Page timing can add a step. The verdict comes from code, so the same final page gives the same verdict.
@@ -641,11 +683,29 @@ mapped page (path pattern, heading, form fields). With `local`, requests go only
 <summary>How do I use it in CI?</summary>
 
 1. Run `quicke2e run ... --emit e2e/generated/` locally until the spec passes.
-2. Commit the emitted `<name>.spec.ts` and run it with `npx playwright test`. It calls no model.
-3. Set `APP_BASE` to the app's URL, and set one environment variable per secret input (`<FLOW>_<KEY>`, for example `LOGIN_PASSWORD`).
+2. Commit the emitted `<name>.spec.ts` and run it with `npx playwright test`. It calls no model. If the
+   repo already has a `playwright.config.ts`, add `e2e/generated` to its `testDir` (or pass the path).
+3. Set `APP_BASE` to the app's URL, and set one environment variable per secret input (`<FLOW>_<KEY>`,
+   for example `LOGIN_PASSWORD`). With `CI` set, a missing secret fails the test instead of skipping it.
 
-`quicke2e run` also works in CI. It runs headless when `CI` is set and exits with code 1 when a spec
-fails.
+The emitted specs do not reset your data. Add a reset to the Playwright project, for example in a
+shared setup file: `test.beforeEach(async ({ request }) => { await request.post("/__test/reset"); })`.
+One secret serves every flow through `QUICKE2E_<KEY>` (for example `QUICKE2E_PASSWORD`).
+`quicke2e run` exits with code 3 when every failure is `ENGINE_ERROR` (an engine timeout or rate
+limit): retry it, it says nothing about the app.
+
+A GitHub Actions job:
+
+```yaml
+- run: npm ci && npx playwright install --with-deps chromium
+- run: npm run start & npx wait-on http://localhost:3000     # start your app and wait for it
+- run: npx playwright test e2e/generated
+  env: { APP_BASE: "http://localhost:3000", LOGIN_PASSWORD: "${{ secrets.LOGIN_PASSWORD }}" }
+```
+
+`quicke2e run` also works in CI. It runs headless when `CI` is set, exits with code 1 when a spec
+fails, and needs `OPENROUTER_API_KEY` as a secret. Node's `fetch` does not read `HTTPS_PROXY`: behind
+a proxy, the hosted engine is not reachable.
 
 </details>
 

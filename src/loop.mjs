@@ -11,7 +11,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
-const SEEN_TEXT = fs.readFileSync(path.join(__dir, "seen-text.js"), "utf8").replace(/^\/\/.*\n/gm, "").trim();
+// comment lines dropped: the text ships inside every emitted spec (wave-2 tests W1, W2)
+const SEEN_TEXT = fs.readFileSync(path.join(__dir, "seen-text.js"), "utf8").replace(/^\s*\/\/.*\n/gm, "").trim();
 const SNAPSHOT = fs.readFileSync(path.join(__dir, "snapshot.js"), "utf8").replaceAll("__SECRET_SRC__", SECRET_SRC.replace(/\\/g, "\\\\"));
 const KEY = process.env.OPENROUTER_API_KEY;
 // PERF (opt-in): QUICKE2E_PROF=1 adds per-phase timings (ms) to every step record as `prof`.
@@ -35,7 +36,8 @@ function neverMatcher(list) {
   if (!list?.length) return null;
   const res = list.map((p) => p instanceof RegExp ? p
     : new RegExp("^" + String(p).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "i"));
-  return (label) => { const l = norm(label); return res.some((r) => { r.lastIndex = 0; return r.test(l); }); };
+  // invisible characters (a soft hyphen in "Del\u00ADete") must not slip past a pattern (security test W6)
+  return (label) => { const l = norm(String(label ?? "").replace(/[\u00AD\u200B-\u200F\u2060\uFEFF]/g, "")); return res.some((r) => { r.lastIndex = 0; return r.test(l); }); };
 }
 // What the page looks like to the loop: URL plus every action's label, value and state.
 function pageSig(snap) {
@@ -48,18 +50,27 @@ const RULES = "Choose the one operation that advances the goal from this page. "
   "Do not repeat a step that is already satisfied. Fill required fields before submitting.";
 
 // Retry 429 and 5xx with backoff (roadmap #1; the bake-off lost 1 of 120 runs to an HTTP 520).
+// Every request has a timeout (launch test 2026-10-07: an engine call that never answered hung the run
+// for good, past maxTimeMs). A timed-out request is retried like a 5xx.
+const ENGINE_TIMEOUT_MS = Number(process.env.QUICKE2E_ENGINE_TIMEOUT_MS) || 30000;
+// The signal covers a real fetch; the race also covers a body read or a fetch wrapper that ignores it.
+const withTimeout = (p) => Promise.race([p, new Promise((_, no) => setTimeout(() =>
+  no(Object.assign(new Error("timeout"), { name: "TimeoutError" })), ENGINE_TIMEOUT_MS + 100).unref())]);
 async function post(url, body, auth, tries = 4) {
   for (let k = 0; ; k++) {
     const tq = performance.now();
-    const res = await fetch(url, { method: "POST",
+    const res = await withTimeout(fetch(url, { method: "POST", signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
       headers: { "Content-Type": "application/json", ...(auth ? { Authorization: `Bearer ${KEY}` } : {}) },
-      body: JSON.stringify(body) }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }));
-    if (res.ok) { const th = performance.now(); const j = await res.json();
+      body: JSON.stringify(body) })).catch((e) => ({ ok: false, status: 0,
+        text: async () => e?.name === "TimeoutError" ? `no answer from the engine in ${ENGINE_TIMEOUT_MS / 1000} s` : String(e) }));
+    if (res.ok) { const th = performance.now(); const j = await withTimeout(res.json());
       lastNet = { ttfb: th - tq, body: performance.now() - th, tries: k + 1 }; return j; }
     if (k + 1 < tries && (res.status === 0 || res.status === 429 || res.status >= 500)) {
       await new Promise((r) => setTimeout(r, 400 * 2 ** k)); continue;
     }
-    throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 140)}`);
+    // Tagged: an engine failure is not an app failure (outcome ENGINE_ERROR, no app reasons printed).
+    throw Object.assign(new Error(res.status === 0 ? `engine request failed after ${k + 1} tries: ${(await res.text()).slice(0, 140)}`
+      : `engine HTTP ${res.status}: ${(await res.text()).slice(0, 140)}`), { engine: true, status: res.status });
   }
 }
 
@@ -136,7 +147,8 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
   const exactKeys = new Set(Object.keys(inputs || {}).filter((k) =>
     snap.actions.some((x) => (x.kind === "fill" || (x.kind === "click" && x.role === "combobox" && x.tag === "input")) && lc(x.label) === lc(k))));
   for (const a of snap.actions) {
-    const op = ops[a.kind]; if (!op) continue;
+    let op = ops[a.kind]; if (!op) continue;
+    if (a.inert) continue;   // behind an open aria-modal dialog (snapshot.js)
     // FIX (v1): native <select>. Each OPTION is its own action, keyed by option -- keying by node
     // kept only the placeholder, and SELECT had no dispatch branch, so fixtures/select.html burned
     // all 10 steps in 64 s. The value comes from the spec when the spec names this control (text
@@ -148,6 +160,10 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
       if (k !== null) { const want = norm(inputs[k]).toLowerCase();
         if (norm(a.optionLabel).toLowerCase() !== want && norm(a.value).toLowerCase() !== want) continue; }
       else if (raw.filter((r) => r.a.selectNode === a.selectNode).length >= 8) continue;
+      // neverClick covers a <select> option (security test W6) -- unless the spec's inputs name that very
+      // option: then choosing it is the spec author's explicit choice (bulk action "Delete" + neverClick
+      // on the confirm dialog's Delete button; wave-2 W4)
+      if (k === null && never && never(a.optionLabel)) continue;
       raw.push({ a: { ...a, label: `${a.optionLabel} in ${a.selectLabel}` }, ops: [op] });
       continue;
     }
@@ -162,12 +178,28 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
       // the SAME field after a reload (TicketBay D1) is still allowed.
       const used = typedKeys.get(`${new URL(snap.url).pathname}|${k}`);
       if (used && used !== a.label) continue;
+      // Repeated rows with the same label (a table's "Heading" column, row 2 of a formset): the key is
+      // already in one of them, so the empty twin is not this key's field and does not hold Save back
+      // (wave-2 test W4: Django TabularInline ran to MAX_STEPS).
+      if (!norm(a.value) && snap.actions.some((b) => b !== a && b.kind === "fill" && b.label === a.label && norm(b.value) === norm(inputs[k]) && norm(b.value))) continue;
+      // ...and of several EMPTY twins only the first: "Number" went into row 1 and "Heading" into row 2,
+      // which saved two half chapters
+      if (!norm(a.value)) { const first = snap.actions.find((b) => b.kind === "fill" && b.label === a.label && !norm(b.value)); if (first && first !== a) continue; }
       // FIX (v1, TicketBay D1): "filled" is read off the DOM, not remembered. A field that already
       // holds its spec value is done; a field we typed into that is EMPTY again (the form reloaded,
       // e.g. an Apply-code GET submit) is offered again. Remembered-and-non-empty stays suppressed,
       // so a masked field (phone formatting) cannot loop.
-      if (norm(a.value) === norm(inputs[k])) continue;
-      if (filled.has(fillKey(snap.url, a)) && norm(a.value)) continue;
+      // ENTER TO SUBMIT (launch test 2026-10-07: TodoMVC 0/8, a todo input has no button): a field that
+      // holds its spec value and has no submit button in its form can be submitted with Enter.
+      // A whitespace-only spec value ("   ", the "only spaces" attack) is a value to type: compared after
+      // trimming it equalled the empty field, so it was never typed and the attack passed falsely
+      // (wave-2 test W3). An empty string still means "leave it empty".
+      const wsOnly = typeof inputs[k] === "string" && inputs[k].length > 0 && !inputs[k].trim();
+      if (wsOnly ? a.wsValue === inputs[k] : norm(a.value) === norm(inputs[k])) {
+        const hasSubmit = a.form >= 0 && snap.actions.some((b) => b.submit && b.form === a.form);
+        if (hasSubmit || a.role === "password" || a.tag === "textarea" || a.role === "slider" || a.itype === "range") continue;
+        op = "PRESS_ENTER";
+      } else if (filled.has(fillKey(snap.url, a)) && norm(a.value)) continue;
     }
     // FIX (2026-09-21): never offer CLICK on a plain textbox. Text is entered via TYPE_TEXT from
     // the spec, so clicking one is always a wasted step -- measured: 5 of 22 steps burned clicking
@@ -178,7 +210,10 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     if (op === "CLICK" && (a.role === "textbox" || a.role === "password" || a.role === "slider")) continue;   // v0.4: a click on a slider sets a random value
     // v0.3: a flow's `neverClick` patterns. The element is never offered, so the engine cannot pick it
     // (a refusal test once paid: the browser blocked the form, then "Pay" was clicked at 0.22).
-    if (op === "CLICK" && never && never(a.label)) continue;
+    // ...and for every op that is not typing: a <select> option, a hover, a drag. Matched against the
+    // page's own name too (baseLabel): QuickE2E's context suffix ("Delete account · Bob") made a pattern
+    // "Delete account" miss, and the run clicked it (security test W6).
+    if (op !== "TYPE_TEXT" && never && (never(a.label) || (a.baseLabel && never(a.baseLabel)) || (a.optionLabel && never(a.optionLabel)))) continue;
     const rowKey = a.kind === "drag" ? a.id : a.node;   // v0.4: drag pairs share a source node; keep each pair
     if (!(rowKey in idx)) { idx[rowKey] = raw.length; raw.push({ a, ops: [] }); }
     if (!raw[idx[rowKey]].ops.includes(op)) raw[idx[rowKey]].ops.push(op);
@@ -188,7 +223,9 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
     // option is picked, so "empty again" must not mean "type again".
     if (op === "CLICK" && a.role === "combobox" && a.tag === "input" && inputs) {
       const k = keyOf(a.label, "combobox");
-      if (k !== null && !filled.has(fillKey(snap.url, a)) && !raw[idx[rowKey]].ops.includes("TYPE_TEXT"))
+      // Not on a readonly input (antd/Mantine Select: typing fails) and not once it shows the spec value:
+      // a TYPE_TEXT row counts as "pending" and held the form's Save back forever (launch test 2026-10-07).
+      if (k !== null && !a.readonly && norm(a.value) !== norm(inputs[k]) && !filled.has(fillKey(snap.url, a)) && !raw[idx[rowKey]].ops.includes("TYPE_TEXT"))
         raw[idx[rowKey]].ops.push("TYPE_TEXT");
     }
   }
@@ -198,13 +235,16 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
   // A select is pending only while the CONTROL is unset (bake-off re-run: counting every remaining
   // option kept "Create project" hidden forever after Enterprise was chosen -- 0/5 on two stacks).
   const pending = new Set(raw.filter((r) => r.a.form >= 0 && (r.ops.includes("TYPE_TEXT")
-    || (r.ops.includes("SELECT") && (!r.a.current_value || keyOf(r.a.selectLabel, "combobox") !== null))))
+    // an unkeyed select holds the submit back only when it is REQUIRED: an "All" filter (value "") is a
+    // valid choice, and holding Search back made the engine pick a category nobody asked for (wave-2 W2)
+    || (r.ops.includes("SELECT") && (keyOf(r.a.selectLabel, "combobox") !== null || (!r.a.current_value && r.a.required)))))
     .map((r) => r.a.form));
   // v0.3: remember WHY a submit is missing, so a failed run can say so (field + spec key).
   const heldBack = [];
   for (let j = raw.length - 1; j >= 0; j--)
     if (raw[j].a.submit && pending.has(raw[j].a.form)) {
-      const f = raw.find((r) => r.a.form === raw[j].a.form && (r.ops.includes("TYPE_TEXT") || r.ops.includes("SELECT")));
+      const f = raw.find((r) => r.a.form === raw[j].a.form && (r.ops.includes("TYPE_TEXT")
+        || (r.ops.includes("SELECT") && (keyOf(r.a.selectLabel, "combobox") !== null || (!r.a.current_value && r.a.required)))));
       const fl = f ? (f.a.selectLabel || f.a.label) : null;
       heldBack.push({ label: raw[j].a.label, waitingFor: fl, key: fl ? keyOf(fl, f.a.selectLabel ? "combobox" : f.a.role) : null });
       raw.splice(j, 1);
@@ -257,7 +297,8 @@ function compact(snap, budget, filled = new Set(), inputs = null, reserve = 3,
       : a.kind === "fill" || a.role === "textbox" ? specShown(a)   // only a non-secret spec value we typed
       : a.kind === "select" || a.role === "password" ? null
       : a.role === "combobox" && a.tag !== "input" && !a.secret ? a.value : null;   // audit S5
-    els.push({ i: n, r: a.role, l: label, ...(a.popup ? { p: 1 } : {}), ...(v && !a.secret ? { v: String(v).slice(0, 24) } : {}) });
+    // aria-current marks the page/step the user is on: the engine clicked pager "2" five times on page 2
+    els.push({ i: n, r: a.role, l: label, ...(a.popup ? { p: 1 } : {}), ...(v && !a.secret ? { v: String(v).slice(0, 24) } : a.current ? { v: "current" } : {}) });
     // NB a select OPTION's `value` is the option, not the control's state: sending it as `v` told
     // the model the plan was already "Growth", and it answered DONE four times (fixtures/select.html).
     // FIX (2026-09-21): put the ROLE in the choice text. Without it the model had to pick between
@@ -286,7 +327,6 @@ function decisionState({ els, values }, snap, history) {
 }
 async function decide(space, snap, goal, history, engine, inputs, weakKeys, redact) {
   const state = decisionState(space, snap, history), criteria = space.criteria;
-  if (process.env.JEV_DEBUG) console.error(JSON.stringify({ state, criteria }));
   return choose({ state, criteria, goal, engine, inputs, weakKeys, redact });
 }
 // PERF: the exact engine input of one decision, as a string. Two snapshots with the same key get the
@@ -302,16 +342,18 @@ export async function choose({ state, criteria, goal, rules = RULES, engine = "j
   // (weak ones only where the loop saw them echoed); declared redact patterns apply to page content.
   ({ state, criteria, goal, rules } = scrub({ state, criteria, goal, rules }, inputs, { weakKeys }));
   ({ state, criteria } = redactPatterns({ state, criteria }, redact));
+  // logged after the scrub and the redaction: JEV_DEBUG printed raw page text (security test W6)
+  if (process.env.JEV_DEBUG) console.error(JSON.stringify({ state, criteria }));
   const questions = { action: { type: "choice", criteria, instructions: { goal, rules } } };
   const t0 = performance.now();
   const prepMs = t0 - tp;
   if (engine === "vercel") {
     const res = await fetch("https://ai-gateway.vercel.sh/v1/evaluate", {
-      method: "POST",
+      method: "POST", signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY}` },
       body: JSON.stringify({ model: "typesafe-ai/jev", state: JSON.stringify(state), questions }),
     });
-    if (!res.ok) throw new Error(`vercel HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
+    if (!res.ok) throw Object.assign(new Error(`engine (vercel) HTTP ${res.status}: ${(await res.text()).slice(0,200)}`), { engine: true, status: res.status });
     const r = await res.json();
     const g = r.providerMetadata?.gateway || {};
     return { choice: r.answers.action.choice, confidence: r.answers.action.confidence ?? 1,
@@ -400,6 +442,22 @@ const READY = () => {
 // and does NOT mean React has finished rendering. Measured: identical code and spec passed 5/5
 // headless but failed 3/3 headed with slowMo:120 -- the snapshot was catching half-rendered forms,
 // so the model saw different option sets and diverged. Wait for the DOM to go QUIET instead.
+// NETWORK QUIET (launch test 2026-10-07, false pass 6/6): a page that fetches "A-0977: Order placed"
+// 200 ms after load was still quiet for 150 ms before the answer came, so the start check saw no
+// "Order placed" and the run then passed on text the app shows by itself. Before the start check,
+// wait until no fetch/XHR request is in flight (capped). Static pages have none and wait 0 ms.
+export function trackNetwork(page) {
+  const open = new Set();
+  const on = (r) => { if (["fetch", "xhr"].includes(r.resourceType())) open.add(r); };
+  const off = (r) => open.delete(r);
+  page.on("request", on); page.on("requestfinished", off); page.on("requestfailed", off);
+  return async (cap = 3000) => {
+    const t0 = Date.now();
+    while (open.size && Date.now() - t0 < cap) await page.waitForTimeout(50);
+    return open.size === 0;
+  };
+}
+
 async function settle(page, quietMs = 150, timeout = 1200) {
   await page.evaluate(
     ([quiet, cap]) =>
@@ -449,15 +507,34 @@ function stateOk(snap, want) {
 // long) or single text nodes ("Item total: $", "39.98") both missed it. So a long inserted element
 // is walked: every element inside it whose full text is under 300 characters is recorded whole.
 // A text change inside an existing element records that element's full text.
+// expectSeen recorder: text that appeared at any moment, if a user could see it at that moment (launch
+// test 2026-10-07, false pass: an opacity-0 toast and "Settings saved" inside a <script type=json>
+// translation block both counted). Skips script/style/noscript/template text; records a node when it is
+// visible now, or when it becomes visible within 1 s (a toast that fades in from opacity 0).
 const SEEN_RECORDER = `(() => {
   window.__jevSeen = [];
   const push = (t) => { t = (t || "").trim(); if (t && t.length < 300 && window.__jevSeen.length < 5000) window.__jevSeen.push(t); };
+  const SKIP = "script, style, noscript, template";
+  const vis = (el) => { try {
+    if (!el.isConnected || el.closest("[hidden], [aria-hidden='true']")) return false;
+    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1;
+  } catch { return false; } };
+  // The text a user sees in the element, by the same per-text-node rules as expect (seen-text.js):
+  // innerText also returned a hidden child ("Processing <span style=opacity:0>Payment confirmed</span>"
+  // passed expectSeen: security test W6, 2026-10-07).
+  const seenText = (${SEEN_TEXT});
+  const text = (el) => { try { return seenText(el); } catch { return ""; } };
+  const watch = (el) => {
+    if (vis(el)) { push(text(el)); return; }
+    for (const ms of [120, 300, 600, 1000]) setTimeout(() => { if (!el.__jevSeenDone && vis(el)) { el.__jevSeenDone = true; push(text(el)); } }, ms);
+  };
   const rec = (n) => {
-    if (n.nodeType === 3) { push(n.parentElement ? n.parentElement.textContent : n.textContent); return; }
-    if (n.nodeType !== 1) return;
-    const t = (n.textContent || "").trim();
+    const el = n.nodeType === 3 ? n.parentElement : n.nodeType === 1 ? n : null;
+    if (!el || el.closest(SKIP)) return;
+    const t = (el.textContent || "").trim();
     if (!t) return;
-    if (t.length < 300) { push(t); return; }
+    if (n.nodeType === 3 || t.length < 300) { watch(el); return; }
     for (const c of n.childNodes) rec(c);
   };
   new MutationObserver((ms) => { for (const m of ms) { m.addedNodes.forEach(rec); if (m.type === "characterData") rec(m.target); } })
@@ -466,11 +543,17 @@ const SEEN_RECORDER = `(() => {
 
 // `expectAbsent` (attack cases): text a user must NOT see -- the success state an attack must never
 // reach (an order confirmation, a refund line). Returns the first such text on the page, or null.
-async function absentSeen(page, flow) {
+// Text assertions ignore case: CSS text-transform shows "ENTER ACCOUNT INFORMATION" for the DOM text
+// "Enter Account Information", and a spec author copies one or the other (launch test 2026-10-07).
+const tnorm = (x) => norm(x).toLowerCase();
+async function absentSeen(page, flow, { loose = false } = {}) {
   if (!flow.expectAbsent?.length) return null;
   try {
-    const seen = norm(await page.evaluate(`(${SEEN_TEXT})()`));
-    return flow.expectAbsent.find((x) => seen.includes(norm(x))) ?? null;
+    // loose (the start check only): also text under aria-hidden. An open modal (Angular CDK) sets
+    // aria-hidden on the app behind it, which hid "Your Basket" from the start check; closing the modal
+    // then gave a false "app accepted the attack" (launch test 2026-10-07).
+    const seen = tnorm(await page.evaluate(`(${SEEN_TEXT})()`) + (loose ? " " + await page.evaluate(() => document.body?.innerText || "") : ""));
+    return flow.expectAbsent.find((x) => seen.includes(tnorm(x))) ?? null;
   } catch { return null; }
 }
 
@@ -480,13 +563,14 @@ async function explainGoal(page, flow) {
   try {
     const url = page.url();
     if (flow.expectUrl) outl.push({ kind: "expectUrl", value: flow.expectUrl, held: new RegExp(flow.expectUrl).test(url), actual: url });
-    const seen = norm(await page.evaluate(`(${SEEN_TEXT})()`));
-    for (const x of flow.expect || []) outl.push({ kind: "expect", value: x, held: seen.includes(norm(x)) });
+    const seen = tnorm(await page.evaluate(`(${SEEN_TEXT})()`));
+    for (const x of flow.expect || []) outl.push({ kind: "expect", value: x, held: seen.includes(tnorm(x)) });
     if (flow.expectSeen?.length) {
-      const past = norm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
-      for (const x of flow.expectSeen) outl.push({ kind: "expectSeen", value: x, held: seen.includes(norm(x)) || past.includes(norm(x)) });
+      const past = tnorm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
+      for (const x of flow.expectSeen) outl.push({ kind: "expectSeen", value: x, held: seen.includes(tnorm(x)) || past.includes(tnorm(x)) });
     }
-    for (const x of flow.expectAbsent || []) outl.push({ kind: "expectAbsent", value: x, held: !seen.includes(norm(x)) });
+    for (const x of flow.expectAbsent || []) outl.push({ kind: "expectAbsent", value: x, held: !seen.includes(tnorm(x)) });
+    for (const x of flow.expectGone || []) outl.push({ kind: "expectGone", value: x, held: !seen.includes(tnorm(x)) });
     if (flow.expectState?.length) {
       const snap = await page.evaluate(`(${SNAPSHOT})()`);
       for (const w of flow.expectState) outl.push({ kind: "expectState", value: w, held: stateOk(snap, [w]) });
@@ -502,14 +586,17 @@ async function checkGoal(page, flow, snap) {
     if (await absentSeen(page, flow)) return false;
     // `expect` asserts against what a USER perceives (src/seen-text.js), not raw innerText: form
     // controls contribute nothing (assert them with expectState), hidden/aria-hidden text not at all.
-    const need = [...(flow.expect || []), ...(flow.expectSeen || [])];
-    const seen = need.length ? norm(await page.evaluate(`(${SEEN_TEXT})()`)) : "";
-    if (!(flow.expect || []).every((x) => seen.includes(norm(x)))) return false;
+    const need = [...(flow.expect || []), ...(flow.expectSeen || []), ...(flow.expectGone || [])];
+    const seen = need.length ? tnorm(await page.evaluate(`(${SEEN_TEXT})()`)) : "";
+    if (!(flow.expect || []).every((x) => seen.includes(tnorm(x)))) return false;
+    // expectGone: text that must NOT be visible at the end (a deleted row). Unlike expectAbsent it may
+    // be on the start page -- that is the point (wave-2 tests B, W1, W3: a delete could not be asserted).
+    if ((flow.expectGone || []).some((x) => seen.includes(tnorm(x)))) return false;
     // v1 (audit A5): `expectSeen` passes if the text appeared at ANY moment since the page loaded --
     // for a toast that lives 300 ms, shorter than a step. Recorded by SEEN_RECORDER (init script).
     if (flow.expectSeen?.length) {
-      const past = norm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
-      if (!flow.expectSeen.every((x) => seen.includes(norm(x)) || past.includes(norm(x)))) return false;
+      const past = tnorm((await page.evaluate(() => window.__jevSeen || [])).join(" "));
+      if (!flow.expectSeen.every((x) => seen.includes(tnorm(x)) || past.includes(tnorm(x)))) return false;
     }
     if (!flow.expectState?.length) return true;
     // A control's state is only readable once the portal has closed and put the value back on
@@ -528,36 +615,92 @@ const ARIA = { textbox: "textbox", password: "textbox", button: "button", link: 
   radio: "radio", menuitem: "menuitem", slider: "slider" };
 // BAKEOFF: the snapshot stamps inside open shadow roots (Playwright CSS pierces them) and
 // same-origin iframes (it does not), so the stamp is looked up in every frame, then the role chain.
+// The fallback when the stamped node is gone (a re-render). It acts only on a UNIQUE match: .first() on
+// "Delete" after a list re-mounted deleted Row A when the engine chose Row B (security test W6).
+const one = async (loc) => { const n = await loc.count(); if (n !== 1) throw new Error(`${n} matches`); return loc; };
 async function byRole(scope, action, fn) {
   const role = ARIA[action.role], name = (action.baseLabel || action.label || "").trim();   // v0.4: context suffix is ours, not the page's
   if (role && name) {
-    try { await fn(scope.getByRole(role, { name, exact: true }).first(), 1500); return "role"; } catch {}
-    try { await fn(scope.getByRole(role, { name }).first(), 1200); return "role~"; } catch {}
+    try { await fn(await one(scope.getByRole(role, { name, exact: true })), 1500); return "role"; } catch {}
+    try { await fn(await one(scope.getByRole(role, { name })), 1200); return "role~"; } catch {}
   }
   if (name) {
-    try { await fn(scope.getByText(name, { exact: true }).filter({ visible: true }).first(), 1200); return "text"; } catch {}
+    try { await fn(await one(scope.getByText(name, { exact: true }).filter({ visible: true })), 1200); return "text"; } catch {}
   }
   throw new Error("unresolvable");
 }
 // v0.4: an action that fails on every strategy is usually blocked by an open popup (a date picker
 // left open over the Save button: 14-24 failed clicks on demoqa). Press Escape once and retry.
+// An ARIA slider has no value to fill: arrow keys move it one step at a time until aria-valuenow is the
+// spec value. Stops (throws) when a key press does not move it or it passes the value. The emitted spec
+// carries the same function (codegen SET_SLIDER), so the replay sets it the same way.
+export const SET_SLIDER = `async (loc, v) => {
+  const want = Number(v), now = async () => Number(await loc.getAttribute("aria-valuenow"));
+  for (let i = 0, cur = await now(); i < 500; i++) {
+    if (cur === want) return;
+    await loc.press(cur < want ? "ArrowRight" : "ArrowLeft");
+    const next = await now();
+    if (next === cur || (cur < want) !== (next <= want) && next !== want) throw new Error("slider cannot reach " + v);
+    cur = next;
+  }
+  throw new Error("slider cannot reach " + v);
+}`;
+// eslint-disable-next-line no-new-func
+const setSlider = new Function(`return ${SET_SLIDER}`)();
 async function act(page, action, fn) {
   try { return await actOnce(page, action, fn); }
   catch (e) {
+    // Escape closes an open modal dialog: the user's form and its error message are gone, and the retry
+    // then opens an empty one (launch test 2026-10-07). With a modal open, no Escape retry.
+    if (await page.evaluate(() => !!document.querySelector("[role=dialog][aria-modal=true], [role=alertdialog], dialog[open]")).catch(() => false)) throw e;
     await page.keyboard.press("Escape").catch(() => {});
     await page.waitForTimeout(150);
     return (await actOnce(page, action, fn)) + "+esc";
   }
 }
 async function actOnce(page, action, fn) {
+  let first = null;   // the stamped node's own error: "... intercepts pointer events" names an overlay
   for (const f of page.frames()) {
     const byNode = f.locator(`[data-jev-node="${action.node}"]`);
     if (!(await byNode.count().catch(() => 0))) continue;
-    try { await fn(byNode, 1200); return f === page.mainFrame() ? "node" : "node@frame"; } catch {}
+    try { await fn(byNode, 1200); return f === page.mainFrame() ? "node" : "node@frame"; } catch (e) { first = e; }
     break;
   }
+  // A visually hidden checkbox/radio (Chakra, Ark: a 1x1 px input under its styled label) is covered by
+  // design: click its label, or dispatch the click on the input itself (launch regression 2026-10-07).
+  if (/intercepts pointer events/.test(String(first?.message)) && action.kind === "click") {
+    const via = await page.evaluate((node) => {
+      const el = document.querySelector(`[data-jev-node="${node}"]`); if (!el) return null;
+      const r = el.getBoundingClientRect(), tiny = r.width < 4 || r.height < 4;
+      if (!(el.matches("input[type=checkbox], input[type=radio]") || tiny)) return null;
+      const lab = el.labels?.[0] || el.closest("label");
+      if (lab) { lab.click(); return "label"; }
+      el.click(); return "dispatch";
+    }, action.node).catch(() => null);
+    if (via) return `node+${via}`;
+  }
+  // The element was found and something lies over it: other locators find the same covered element.
+  if (/intercepts pointer events/.test(String(first?.message))) throw Object.assign(new Error("covered"), { first });
   for (const f of page.frames()) { try { return await byRole(f, action, fn); } catch {} }
-  throw new Error("unresolvable");
+  throw Object.assign(new Error("unresolvable"), { first });
+}
+// OVERLAYS (launch test 2026-10-07: a cookie banner over "Sign in" gave 4 failed clicks and a LOOP after
+// 33 s, with no word about the banner). When Playwright says another element intercepts the click,
+// read that element's text, so the history and the FAIL reason can name it.
+async function coverOf(page, action, err) {
+  if (!/intercepts pointer events/.test(String(err?.first?.message || err?.message || ""))) return null;
+  return page.evaluate((node) => {
+    const el = document.querySelector(`[data-jev-node="${node}"]`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!top || el.contains(top)) return null;
+    for (let n = top; n && n !== document.body; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (["fixed", "sticky", "absolute"].includes(cs.position) || n.getAttribute("role") === "dialog") { top = n; break; }
+    }
+    return String(top.innerText || "").replace(/\s+/g, " ").trim().slice(0, 90) || top.tagName.toLowerCase();
+  }, action.node).catch(() => null);
 }
 
 export async function runOnce({ flow, engine = "local", budget = 30, browser: shared, trace,
@@ -576,9 +719,29 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });
   if (flow.expectSeen?.length) await context.addInitScript(SEEN_RECORDER);
   const page = await context.newPage();
+  // WATCHDOG (security test W6): a page script in an endless loop blocks every evaluate, and the run hung
+  // for good (maxTimeMs is checked only between steps). At a hard deadline the context is closed: the
+  // blocked call fails, and the run ends with TIMEOUT.
+  const hardMs = flow.maxTimeMs ? flow.maxTimeMs + 5000 : Number(process.env.QUICKE2E_RUN_TIMEOUT_MS) || 180000;
+  let timedOut = false;
+  const watchdog = setTimeout(() => { timedOut = true; context.close().catch(() => {}); }, hardMs);
+  watchdog.unref?.();
+  const netQuiet = trackNetwork(page);
   // A 5xx answer to a main-frame navigation is never a result: the run stops with SERVER_ERROR.
-  let httpStatus = null;
-  page.on("response", (r) => { try { if (r.status() >= 500 && r.request().isNavigationRequest() && r.frame() === page.mainFrame()) httpStatus = r.status(); } catch {} });
+  let httpStatus = null, startStatus = null;   // (apiError: see below)
+  // A same-origin fetch/XHR that answers 5xx is a server error too: the UI said "Added to cart" while
+  // POST /api/cart failed, and the run passed (wave-2 test W2). allowServerErrors: true opts out.
+  let apiError = null;
+  const appOrigin = (() => { try { return new URL(base).origin; } catch { return null; } })();
+  page.on("response", (r) => { try {
+    if (!flow.allowServerErrors && r.status() >= 500 && ["fetch", "xhr"].includes(r.request().resourceType()) && new URL(r.url()).origin === appOrigin) {
+      httpStatus = r.status(); apiError ??= { method: r.request().method(), path: new URL(r.url()).pathname, status: r.status() }; }
+  } catch {} });
+  page.on("response", (r) => { try { if (r.request().isNavigationRequest() && r.frame() === page.mainFrame()) {
+    if (r.status() >= 500) httpStatus = r.status();
+    // The first main-frame answer: a 401/403 start page (basic auth, no session) is named in the record.
+    if (startStatus == null && !(r.status() >= 300 && r.status() < 400)) startStatus = r.status();   // redirects skipped
+  } } catch {} });
   const videoAt = video ? Math.round(performance.now() - t0) : null;
   const steps = [], history = [];
   let outcome = "UNKNOWN", error = null, doneRejects = 0, blocked = 0;
@@ -602,22 +765,30 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   };
   const echoed = () => [...weakTyped];
   const isOwn = (text) => before.has(norm(text).toLowerCase());
-  let startProf = null, firstSnap = null, startStopped = null, unreachable = null;
+  let startProf = null, firstSnap = null, startStopped = null, unreachable = null, engineStatus = null, coveredBy = null;
   let specIssued = 0, specUsed = 0;   // PERF: speculative decisions (see speculate)
   const specOpen = new Set();          // early calls not used (yet): their cost is added at run end
   let decideMs = 0, inferMs = 0, cost = 0, truncs = 0, routeRec = null, invalidChoice = null, absentHit = null;
   // v0.3 SIDE-EFFECT GUARD: an action the engine picks below this confidence is not executed; it
   // counts as BLOCKED (measured: a refusal test paid at 0.22 once the browser blocked the form).
   const minConfidence = flow.minConfidence ?? minConfArg ?? MIN_CONFIDENCE;
-  const never = neverMatcher(flow.neverClick);
+  // Framework dev-tool buttons (dev servers) are never offered: they are not part of the app.
+  const DEV_TOOLS = /^(open next\.js dev tools|toggle nuxt devtools|toggle component inspector|open tanstack query devtools|open react query devtools|toggle svelte inspector)$/i;
+  const userNever = neverMatcher(flow.neverClick);
+  const never = (label) => DEV_TOOLS.test(String(label).trim()) || (userNever ? userNever(label) : false);
+  const neverHit = new Set();   // labels neverClick kept from the engine: named when the run fails
   let lastHeldBack = [], lowBest = null;
   // v0.3 LOOP DETECTION: the same action on an unchanged page, again and again, is not progress
   // (measured: 8x the same field, 11x the wrong combobox, 24x an autocomplete). Stop and name it.
   let loopKey = null, loopSig = null, loopN = 0, loopRec = null;
+  const seenPairs = new Map();
   // v0.4 NATIVE DIALOGS: without a handler Playwright dismisses every dialog, so "Delete? OK" could
   // never be confirmed and a prompt never got text (demoqa, the-internet). Accept by default
   // (flow.dialog: "dismiss" flips it); a prompt's text comes from the spec key its message names.
   const dialogs = [];
+  // network failures (the app died mid-run): named on a FAIL instead of "low confidence" (wave-2 W1)
+  const netFails = [];
+  page.on("requestfailed", (r) => { try { const f = r.failure()?.errorText || ""; if (!/ERR_ABORTED/.test(f) && netFails.length < 20) netFails.push(f); } catch {} });
   page.on("dialog", async (dlg) => {
     const msg = scrubText(dlg.message().slice(0, 120), flow.inputs);
     const action = flow.dialog === "dismiss" && dlg.type() !== "beforeunload" ? "dismiss" : "accept";
@@ -635,13 +806,19 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     const tCtx = performance.now() - t0;
     try { await page.goto(base + (flow.start || "/"), { waitUntil: "domcontentloaded" }); }
     catch (e) { unreachable = String(e.message || e).split("\n")[0]; throw e; }
+    // HYDRATION (launch test 2026-10-07): server-rendered buttons do nothing until the app's JS has
+    // loaded; with JS ~1 s late, Next and SvelteKit runs clicked dead buttons and stopped with LOOP.
+    // The load event comes after the scripts (capped: a slow image must not hold the run).
+    await page.waitForLoadState("load", { timeout: 3000 }).catch(() => {});
     if (PROF) startProf = { browser: Math.round(tBrowser), context: Math.round(tCtx - tBrowser), goto: Math.round(performance.now() - t0 - tCtx) };
     // v0.4 AUTH: a flow that brings a login (storageState) but lands on a sign-in page has a missing or
     // expired session. Stop now with a reason; the skill test burned 17 runs' steps on the sign-in page.
     const startPath = new URL(base + (flow.start || "/")).pathname;
-    if (flow.storageState && /(sign[-_]?in|log[-_]?in|auth)/i.test(new URL(page.url()).pathname) && !/(sign[-_]?in|log[-_]?in|auth)/i.test(startPath)) {
+    // pathname + hash: hash-routed apps redirect to #/login (launch test 2026-10-07)
+    const startHash = new URL(base + (flow.start || "/")).hash, nowUrl = new URL(page.url());
+    if (flow.storageState && /(sign[-_]?in|log[-_]?in|auth)/i.test(nowUrl.pathname + nowUrl.hash) && !/(sign[-_]?in|log[-_]?in|auth)/i.test(startPath + startHash)) {
       outcome = "AUTH_REQUIRED";
-      error = `the start page redirected to ${new URL(page.url()).pathname}: the storageState is missing or expired; log in again and save it`;
+      error = `the start page redirected to ${nowUrl.pathname}${nowUrl.hash}: the storageState is missing or expired; log in again and save it`;
       throw Object.assign(new Error(error), { authRequired: true });
     }
     // MAP (v1): with a discovered map, Jev first picks the page where the work begins and code
@@ -665,8 +842,16 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     // makes the model take the escape hatch: measured DONE@0.90, and BLOCKED@0.9997 when DONE
     // was removed. Removing the bad options (rather than instructing against them) gives
     // CLICK@1.00. Same principle as finding #2 in the README.
+    // An open LIST (listbox, menu): its options are the only legal moves. An open DIALOG is a page of its
+    // own: while its submit is pending the engine needs WAIT (launch test 2026-10-07: with no WAIT in a
+    // portal modal it clicked Cancel and lost the server error; create-duplicate 0/3 on Next, Nuxt, Angular).
+    const LIST_ROLES = ["option", "menuitem", "menuitemradio", "menuitemcheckbox"];
+    const listOpen = (space) => space.all.some((r) => r.a.popup && LIST_ROLES.includes(r.a.role));
     const addMeta = (space, listboxOpen) => {
-      if (listboxOpen) return;
+      // An open list with a choice already made (a multi-select stays open: MUI) can be closed; without
+      // this the form behind it was unreachable (launch test 2026-10-07, 0/2). A list with nothing
+      // chosen yet gets no escape option (2026-09-21: WAIT/DONE/BLOCKED there were taken over a pick).
+      if (listboxOpen) { if (space.all.some((r) => r.a.popup && r.a.role === "option" && r.a.selected)) space.criteria.CLOSE = "close the open list"; return; }
       space.criteria.WAIT = "wait for the page";
       // No DONE option. The goal is checked deterministically on EVERY snapshot before this decision,
       // so when the model is asked, "done" is false by construction; offering it only created a
@@ -688,7 +873,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     // (an engine call that changes keyMap), no tournament.
     // Not on `local`: local-engine/server.py answers one request at a time, so a discarded early call
     // delays the real one by a whole inference (review 2026-10-06).
-    const canSpeculate = SPECULATE && engine !== "local" && !weak.length && !flow.redact?.length;
+    const canSpeculate = SPECULATE && engine !== "local" && !weak.length && !flow.redact?.length && !flow.control;   // a load attack never acts
     const needsResolve = (snap) => flow.inputs && snap.actions.some((a) => a.kind === "fill" && !keyMap.has(a.label)
       && keyFor(a.label, flow.inputs, a.role) === null);
     const speculate = async (i) => {
@@ -700,7 +885,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, s0)) return null;
       const sp = spaceFor(s0);
       if (sp.dropped > 0) return null;
-      addMeta(sp, sp.all.some((r) => r.a.popup));
+      addMeta(sp, listOpen(sp));
       const goal = redactGoal(flow.goal, flow.inputs, []), hist = historyFor(sp);
       const key = decisionKey(sp, s0, goal, hist);
       const pending = decide(sp, s0, goal, hist, engine, flow.inputs, [], flow.redact);
@@ -714,12 +899,13 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     // __jevSeen was empty, so expectSeen counts only as on-screen text), and expectAbsent text on it.
     // It returns true to stop the run. The settled snapshot is step 1's snapshot when no map moves the page.
     if (startCheck && !flow.control) {
+      await netQuiet();
       // No early engine call here: a flow the start check stops must not send page content or cost a call
       // (review 2026-10-06). Step 1 is decided on this settled snapshot.
       await settle(page);
       firstSnap = await page.evaluate(`(${SNAPSHOT})()`);
       const now = { ...flow, expect: [...(flow.expect || []), ...(flow.expectSeen || [])], expectSeen: undefined };
-      const w = { at: flow.start || "/", weak: await checkGoal(page, now, firstSnap), absent: await absentSeen(page, flow) };
+      const w = { at: flow.start || "/", weak: await checkGoal(page, now, firstSnap), absent: await absentSeen(page, flow, { loose: true }) };
       if (await startCheck(w)) { outcome = w.absent ? "ABSENT_ON_START" : "WEAK_ASSERTION"; startStopped = w; throw Object.assign(new Error("start check"), { startStop: true }); }
       if (map && routeMode) firstSnap = null;
     }
@@ -738,7 +924,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         const r = findRoute(map, here, t.target);
         if (r) routeRec.hops = routeMode === "goto"
           ? (await page.goto(t.target, { waitUntil: "domcontentloaded" }), [{ goto: t.target }])
-          : await walk(page, r, t.target);
+          : await walk(page, r, t.target, never);
         else routeRec.unreachable = true;
       }
       routeRec.ms = Math.round(performance.now() - t0);
@@ -761,6 +947,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         catch { await page.waitForTimeout(150); snap = await page.evaluate(`(${SNAPSHOT})()`); }
       }
       lap("snapshot");
+      if (userNever) for (const a of snap.actions) if (a.kind === "click" && userNever(a.label)) neverHit.add(a.label);
       // FIX (2026-09-21): check the goal on EVERY snapshot, not only when the model claims DONE.
       // Measured on create-campaign: the campaign WAS created at step 17, the model never noticed,
       // and it then clicked away to /team and destroyed its own result -- reported as MAX_STEPS.
@@ -798,6 +985,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       // With `control`, loading the start URL IS the action (another user's order), so step 0 counts.
       lap("absent");
       if ((i > 0 || routeRec?.hops?.length || flow.control) && await checkGoal(page, flow, snap)) { outcome = "DONE_VERIFIED"; break; }
+      // A load attack (control): loading the start URL IS the attack, so it is decided on that page. The
+      // run used to keep clicking and passed on a linked page that said "Nothing here" while the start
+      // URL had leaked the order (wave-2 test W4). Never act on a control flow.
+      if (flow.control && i === 0 && !routeRec?.hops?.length) { outcome = "NOT_REFUSED"; break; }
       lap("checkGoal");
 
       // FIX (v1, TicketBay D2): a field whose label contains no spec key (a rename: "Email" ->
@@ -808,7 +999,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       let space = spaceFor(snap);
       lap("compact");
       lastHeldBack = space.heldBack;
-      const listboxOpen = space.all.some((r) => r.a.popup);
+      const listboxOpen = listOpen(space);
       const shownHistory = () => historyFor(space);
       // TOURNAMENT (v1). When the page has more candidates than one decision can hold (the budget,
       // then the 52-letter ceiling), the old loop DROPPED the rest -- fixtures/table.html's "Next
@@ -877,11 +1068,17 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         + `discarded options past the ${LETTER_CEILING}-letter ceiling -- the model did not see them`); }
 
       let op = d.choice, tIdx = null, action = null, low = null;
-      if (!["WAIT", "DONE", "BLOCKED"].includes(op)) {
+      if (!["WAIT", "DONE", "BLOCKED", "CLOSE"].includes(op)) {
         const [o, ix] = String(d.choice).split(":");
         op = o; tIdx = ix; action = space.targets[o]?.[ix];
         if (!action) op = "BLOCKED";
-        else if (d.confidence != null && d.confidence < minConfidence) {
+        // Typing a spec value, or choosing the option the spec names, has no side effect: these picks are
+        // not gated. On a long form every pending spec field is a right next step, so the engine's
+        // probability splits and the top pick fell to 0.26-0.28, below the gate (wave-2 test W5: 0/2 ->
+        // with the gate lowered 2/2). Clicks, which can buy, pay or delete, stay gated.
+        else if (d.confidence != null && d.confidence < minConfidence
+          && !(op === "TYPE_TEXT" && specValue(flow, action, keyMap) != null)
+          && !(op === "SELECT" && keyFor(action.selectLabel, flow.inputs || {}, "combobox") !== null)) {
           low = { op, label: action.label, confidence: Math.round(d.confidence * 100) / 100 };
           if (!lowBest || low.confidence > lowBest.confidence) lowBest = low;
           op = "BLOCKED"; action = null; tIdx = null;
@@ -893,7 +1090,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       // `tag` distinguishes a native <select> combobox from a <button role=combobox> trigger,
       // which need different assertions (toHaveValue vs toContainText).
       const step = { n: i + 1, at, decidedAt: Math.round(performance.now() - t0), url: snap.url, op, target: tIdx, label: action?.label ?? null,
-        role: action?.role ?? null, tag: action?.tag ?? null,
+        role: action?.role ?? null, tag: action?.tag ?? null, ...(action?.itype === "file" ? { file: true } : {}),
         confidence: d.confidence, ms: Math.round(d.ms), inferMs: d.inferMs, tokens: d.tokens,
         options: Object.keys(space.criteria).length, dropped: space.dropped, truncated: d.truncated,
         ...(low ? { lowConfidence: low } : {}),
@@ -908,12 +1105,22 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         const sig = pageSig(snap);
         loopN = key === loopKey && sig === loopSig ? loopN + 1 : 1;
         loopKey = key; loopSig = sig;
+        // An A-B-A-B oscillation (Next / Search on page 3; open and close a menu) never repeats one action
+        // back to back: count each (page, action) pair over the run (wave-2 tests W2, W5).
+        const pair = `${sig}|${key}`; seenPairs.set(pair, (seenPairs.get(pair) || 0) + 1);
+        if (seenPairs.get(pair) >= LOOP_LIMIT && loopN < LOOP_LIMIT) loopN = LOOP_LIMIT;
         if (loopN >= LOOP_LIMIT) {
           loopRec = { op, label: action.label, times: loopN - 1 };   // executed; the next one was stopped
           step.loop = true; steps.push(step); outcome = "LOOP"; break;
         }
       }
 
+      if (op === "CLOSE") {
+        await page.keyboard.press("Escape").catch(() => {});
+        history.push("closed the list");
+        await settle(page);
+        step.wallAt = Math.round(performance.now() - t0); steps.push(step); continue;
+      }
       if (op === "DONE") {
         await page.waitForFunction(READY, null, { timeout: 2000, polling: 50 }).catch(() => {});
         if (await checkGoal(page, flow)) { steps.push(step); outcome = "DONE_VERIFIED"; break; }
@@ -958,7 +1165,16 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         const v = specValue(flow, action, keyMap);
         if (v === null) { step.noSpecValue = true; steps.push(step); outcome = "NO_SPEC_VALUE"; break; }
         step.inputKey = specKey(flow, action, keyMap);   // CODEGEN: the key, never the value
-        try { step.via = await act(page, action, (loc, t) => loc.fill(v, { timeout: t })); lap("act"); }
+        const ariaSlider = action.role === "slider" && action.tag !== "input";
+        // A file input takes a file path from the spec (relative to the working folder).
+        const file = action.itype === "file";
+        // one path or a list of paths (a multi-file input), relative to the working folder
+        const files = file ? (Array.isArray(v) ? v : [v]).map((x) => path.resolve(String(x))) : null;
+        const missing = files?.find((x) => !fs.existsSync(x));
+        if (missing) { step.stale = true; step.missingFile = missing; steps.push(step);
+          history.push(`stale ${action.label}`); stuck.add(fillKey(snap.url, action)); continue; }
+        try { step.via = await act(page, action, ariaSlider ? (loc) => setSlider(loc, v)
+          : file ? (loc, t) => loc.setInputFiles(files, { timeout: t }) : (loc, t) => loc.fill(String(v), { timeout: t })); lap("act"); }
         catch {
           // A field that cannot take its value is dropped, not retried: a mapped key is unmapped,
           // and the field is not offered for typing again in this run.
@@ -982,6 +1198,11 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
           if (popupOpen) { await page.keyboard.press("Tab").catch(() => {}); step.closedPopup = true; }
           lap("popupCheck");
         }
+      } else if (op === "PRESS_ENTER") {
+        try { step.via = await act(page, action, (loc, t) => loc.press("Enter", { timeout: t })); lap("act"); }
+        catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
+        history.push(`pressed Enter in ${action.label}`);
+        await page.waitForTimeout(150);
       } else if (op === "SELECT") {
         try { step.via = await act(page, { ...action, node: action.selectNode, label: action.selectLabel, role: "combobox" },
           (loc, t) => loc.selectOption({ label: action.optionLabel }, { timeout: t })); lap("act"); }
@@ -999,8 +1220,43 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
         history.push(`${op === "HOVER" ? "hovered" : "dragged"} ${action.label}`);
         await page.waitForTimeout(200);
       } else if (op === "CLICK") {
-        try { step.via = await act(page, action, (loc, t) => loc.click({ timeout: t })); lap("act"); }
-        catch { step.stale = true; steps.push(step); history.push(`stale ${action.label}`); continue; }
+        let clickErr = null;
+        // The element actually resolved must not match neverClick either (a fallback could resolve a
+        // different element than the one chosen; security test W6).
+        const guarded = async (loc, t) => {
+          const name = await loc.evaluate((el) => (el.getAttribute("aria-label") || el.innerText || el.value || el.title || "").trim()).catch(() => "");
+          if (name && never(name)) throw new Error("neverClick");
+          return loc.click({ timeout: t });
+        };
+        try { step.via = await act(page, action, guarded); lap("act"); }
+        catch (e) { clickErr = e; }
+        // The field's own floating label over its trigger (Angular Material mat-select: <mat-label>
+        // intercepts the click; launch test 2026-10-07, LOOP 0/4): when what lies over the target is a
+        // non-control inside the target's own field wrapper, the click is meant for the target.
+        if (clickErr && /intercepts pointer events/.test(String(clickErr.first?.message || clickErr.message)) && await page.evaluate((node) => {
+          const el = document.querySelector(`[data-jev-node="${node}"]`); if (!el) return false;
+          const r = el.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          if (!top || top.closest("button, a[href], input, select, textarea, [role=button], [role=dialog]")) return false;
+          // the shared wrapper must be the field itself: a box at most ~6x the target (never <body>, which
+          // also holds a cookie banner)
+          for (let p = el.parentElement, d = 0; p && d < 5 && p !== document.body; p = p.parentElement, d++) {
+            const q = p.getBoundingClientRect();
+            if (q.width * q.height > 6 * Math.max(1, r.width * r.height)) return false;
+            if (p.contains(top)) return true;
+          }
+          return false;
+        }, action.node).catch(() => false)) {
+          try { await page.locator(`[data-jev-node="${action.node}"]`).first().click({ force: true, timeout: 1500 }); step.via = "node+force"; clickErr = null; } catch {}
+        }
+        if (clickErr) {
+          const e = clickErr;
+          step.stale = true;
+          const cover = await coverOf(page, action, e);
+          if (cover) { step.coveredBy = cover; coveredBy = { label: action.label, by: cover }; }
+          steps.push(step);
+          history.push(cover ? `"${action.label}" is covered by "${cover}": deal with that first` : `stale ${action.label}`);
+          continue;
+        }
         // FIX (2026-09-21): a link click starts a navigation that has not begun yet when we
         // re-snapshot. READY is true on the OLD page and settle() sees a DOM that is quiet only
         // because nothing has happened, so the loop re-reads the old page and clicks the same link
@@ -1029,17 +1285,54 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
 
     }
     if (outcome === "UNKNOWN") outcome = "MAX_STEPS";
-  } catch (e) { if (!e.authRequired && !e.startStop) { error = String(e.message || e).slice(0, 180); outcome = "ERROR"; } }
+  } catch (e) { if (!e.authRequired && !e.startStop) { error = String(e.message || e).slice(0, 180); outcome = e.engine ? "ENGINE_ERROR" : "ERROR";
+    if (e.engine) engineStatus = e.status; } }
+  clearTimeout(watchdog);
+  if (timedOut) { outcome = "TIMEOUT"; error = `the page did not answer for ${Math.round(hardMs / 1000)} s (a script in an endless loop?); the browser context was closed`; }
 
   const tLoopEnd = performance.now() - t0;
-  if (httpStatus && outcome !== "ERROR") outcome = "SERVER_ERROR";
-  const passed = outcome !== "SERVER_ERROR" && !startStopped && await checkGoal(page, flow);
+  if (httpStatus && !["ERROR", "ENGINE_ERROR"].includes(outcome)) outcome = "SERVER_ERROR";
+  let passed = outcome !== "SERVER_ERROR" && !startStopped && await checkGoal(page, flow);
+  // NO ACTION, NO PASS (launch test 2026-10-07, false pass on OrangeHRM): the start check read the page
+  // while a SPA still showed its spinner; the form then rendered with a " * Required" footnote, and the
+  // run passed after 11 WAITs without one action. Assertions that hold before the run did anything
+  // prove nothing. A `control` flow is exempt: there, loading the start URL IS the attack.
+  const acted = steps.some((st) => !["WAIT", "BLOCKED", "DONE"].includes(st.op) && !st.stale && !st.loop) || routeRec?.hops?.length;
+  if (passed && !acted && !flow.control) { passed = false; outcome = "WEAK_ASSERTION";
+    error = "the assertions held before any action: they do not prove the goal (the page reached this state by itself)"; }
   // A success marker that appeared after the last step is still a finding, not "got lost".
-  if (!absentHit && !startStopped && !["ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
+  if (!absentHit && !startStopped && !["ERROR", "ENGINE_ERROR", "SERVER_ERROR"].includes(outcome) && (absentHit = await absentSeen(page, flow))) outcome = "ABSENT_SEEN";
   const tCheck = performance.now() - t0;
   const finalUrl = page.url();
   // v0.3: say WHY. Per-assertion results always; the rest only when the run failed.
   const assertions = await explainGoal(page, flow);
+  // REASONS (wave-2 tests W1, W3): what the spec gave that the run never used, the fields it had no
+  // value for, what the page itself says is wrong, and a select value that matches no option.
+  const used = new Set(steps.map((x) => x.inputKey).filter(Boolean));
+  for (const x of steps) if (x.op === "SELECT" && x.control) { const k = keyFor(x.control, flow.inputs || {}, "combobox"); if (k) used.add(k); }
+  const unusedInputs = Object.keys(flow.inputs || {}).filter((k) => !used.has(k));
+  let endSnap = null;
+  try { endSnap = await page.evaluate(`(${SNAPSHOT})()`); } catch {}
+  const unkeyedFields = passed || !endSnap ? [] : [...new Set(endSnap.actions.filter((a) => a.kind === "fill" && !a.secret && !norm(a.value)
+    && keyFor(a.label, flow.inputs || {}, a.role) === null && !keyMap.get(a.label)).map((a) => a.label))].slice(0, 6);
+  const unmatchedOptions = [];
+  if (endSnap) for (const st of endSnap.actions.filter((a) => a.kind === "state" && a.tag === "select")) {
+    const k = keyFor(st.label, flow.inputs || {}, "combobox"); if (k === null) continue;
+    const opts = endSnap.actions.filter((a) => a.kind === "select" && a.selectLabel === st.label).map((a) => a.optionLabel);
+    const want = norm(flow.inputs[k]).toLowerCase();
+    if (opts.length && !opts.some((o) => norm(o).toLowerCase() === want)) unmatchedOptions.push({ key: k, value: String(flow.inputs[k]), field: st.label, options: opts.slice(0, 8) });
+  }
+  const pageErrors = passed ? [] : await page.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1 && (!el.checkVisibility || el.checkVisibility({ opacityProperty: true, visibilityProperty: true })); };
+    const out = [];
+    for (const el of document.querySelectorAll("[role=alert], [aria-live=assertive], [aria-live=polite], [role=status]"))
+      if (vis(el)) { const t = el.innerText.replace(/\s+/g, " ").trim(); if (t && t.length < 200) out.push(t); }
+    for (const f of document.querySelectorAll("[aria-invalid=true]")) {
+      const ids = (f.getAttribute("aria-errormessage") || f.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+      for (const id of ids) { const e = document.getElementById(id); const t = e && vis(e) ? e.innerText.replace(/\s+/g, " ").trim() : ""; if (t) out.push(t); }
+    }
+    return [...new Set(out)].slice(0, 4);
+  }).catch(() => []);
   const emptyRequired = passed ? [] : await page.evaluate(() => [...document.querySelectorAll(
     "input[required],select[required],textarea[required],[aria-required=true]")]
     .filter((el) => el.offsetParent !== null && !String(el.value ?? "").trim() && el.type !== "hidden")
@@ -1049,7 +1342,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   await context.close();
   if (!shared) await browser.close();
   const rec = { flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}), base, engine, budget, outcome, passed, finalUrl, error,
-    ...(absentHit ? { absentSeen: absentHit } : {}), ...(httpStatus ? { httpStatus } : {}), steps,
+    ...(absentHit ? { absentSeen: absentHit } : {}), ...(httpStatus ? { httpStatus } : {}), ...(apiError ? { apiError } : {}), ...(engineStatus != null ? { engineStatus } : {}), ...(startStatus >= 400 ? { startStatus } : {}), steps,
     ...(routeRec ? { route: routeRec } : {}), ...(invalidChoice ? { invalidChoice } : {}),
     decideMs: Math.round(decideMs), inferMs: Math.round(inferMs), cost, truncations: truncs,
     doneRejects, wallMs: Math.round(performance.now() - t0),
@@ -1060,6 +1353,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
     ...(() => { const slow = steps.filter((x) => x.wallAt != null && x.decidedAt != null && x.wallAt - x.decidedAt > SLOW_MS)
       .map((x) => ({ n: x.n, op: x.op, label: x.label, ms: x.wallAt - x.decidedAt })); return slow.length ? { slowSteps: slow } : {}; })(),
     ...(!passed ? {
+      ...(neverHit.size ? { neverHidden: [...neverHit].slice(0, 5) } : {}),
+      ...(pageErrors.length ? { pageErrors } : {}), ...(unkeyedFields.length ? { unkeyedFields } : {}),
+      ...(netFails.length ? { networkErrors: [...new Set(netFails)].slice(0, 3), networkErrorCount: netFails.length } : {}),
+      ...(coveredBy ? { coveredBy } : {}),
       ...(loopRec ? { loop: loopRec } : {}),
       ...(lastHeldBack?.length ? { heldBack: lastHeldBack } : {}),
       ...(lowBest && outcome === "MODEL_BLOCKED" ? { lowConfidence: lowBest, minConfidence } : {}),
@@ -1067,6 +1364,7 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
       emptyRequired,
     } : {}),
     tLoopEnd: Math.round(tLoopEnd), tCheck: Math.round(tCheck),
+    ...(unusedInputs.length ? { unusedInputs } : {}), ...(unmatchedOptions.length ? { unmatchedOptions } : {}),
     ...(startStopped ? { startCheck: startStopped } : {}), ...(unreachable ? { unreachable } : {}),
     ...(specIssued ? { speculative: { used: specUsed, wasted: specIssued - specUsed } } : {}), ...(startProf ? { startProf } : {}) };
   // SECURITY (audit): the trace on disk is scrubbed too -- a GET form puts a password in finalUrl.
@@ -1076,12 +1374,31 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   const q = (u) => { if (!u || !rec.weakEchoed.length) return u; const i = u.indexOf("?");
     return i < 0 ? u : u.slice(0, i) + scrubText(u.slice(i), flow.inputs, { weakKeys: rec.weakEchoed }); };
   rec.finalUrl = redactUrl(q(rec.finalUrl));
+  // the same scrub for the URL an expectUrl assertion reports as "actual" (a weak password in a GET
+  // login query reached the FAIL line and --json: security test W6)
+  for (const a of rec.assertions || []) if (typeof a.actual === "string") a.actual = redactUrl(q(a.actual));
   for (const st of rec.steps) { st.url = redactUrl(q(st.url)); if (st.label) st.label = String(st.label); }
   // Every early call that was not used still cost money, including one sent on the last step, before
   // the goal check ended the run (review 2026-10-06: that one was missing from rec.cost).
   for (const r of await Promise.allSettled([...specOpen])) if (r.status === "fulfilled") rec.cost += r.value?.cost || 0;
-  if (trace) fs.writeFileSync(trace, JSON.stringify(scrub(rec, flow.inputs), null, 2));
-  return rec;
+  // SECURITY (launch test 2026-10-07): the returned record is scrubbed too, not only the trace file. The
+  // CLI prints it (--json, the FAIL reason lines), and CI logs keep stdout: a GET login form put the
+  // password in finalUrl, and a page that echoed it put it in a step label.
+  // Basic-auth credentials in the base URL (http://user:pass@host) never leave the run: not in the record,
+  // the trace, or the emitted spec built from it (launch test: the emitted spec had them in BASE).
+  const noCreds = (u) => typeof u === "string" ? u.replace(/(https?:\/\/)[^\/\s"]*@/gi, "$1") : u;   // a password may contain "@"
+  rec.base = noCreds(rec.base); rec.finalUrl = noCreds(rec.finalUrl);
+  for (const st of rec.steps) st.url = noCreds(st.url);
+  for (const a of rec.assertions || []) if (typeof a.actual === "string") a.actual = noCreds(a.actual);
+  // A verified locator is built from the live accessible name, after redaction ran on the snapshot: it
+  // can hold text the spec declared with `redact`. Drop it; codegen then uses the redacted label's
+  // stable prefix (security test W6: "Copy code ZX81-QQ42-7781" reached the emitted spec and the trace).
+  const redactRx = (flow.redact || []).filter((r) => r instanceof RegExp);
+  if (redactRx.length) for (const st of rec.steps) if (st.locator?.code && redactRx.some((r) => { r.lastIndex = 0; return r.test(st.locator.code); })) delete st.locator;
+  const out = scrub(rec, flow.inputs);
+  out.flow = flow.name;   // the spec's own name: a secret's partial-echo rule mangled "juice-login-wrong-password"
+  if (trace) try { fs.writeFileSync(trace, JSON.stringify(out, null, 2)); } catch (e) { console.warn(`[trace] not written: ${e.message}`); }
+  return out;
 }
 
 export { SEEN_RECORDER };

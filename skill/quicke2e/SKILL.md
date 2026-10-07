@@ -20,13 +20,13 @@ npx quicke2e discover http://localhost:3000 --start / -o quicke2e.map.json
 
 - Full crawl is the default on localhost: it submits forms. Use a throwaway database (`--reset "<cmd>"` to restore seed data).
 - Any other host: use `--safe`, unless the user confirms the data is disposable (`--i-own-this-data`).
-- Pages behind a sign-in: save a session first (see step 4) and pass `--storage state.json`.
+- Pages behind a sign-in: save a session first (the login recipe below) and pass `--storage state.json`. Crawl once per role and once signed out: a signed-in crawl does not reach `/login` or `/join`.
 - Read the map: pages, edges, forms, fields, options, and what each form submit led to.
 
 **Pages behind a login.** Save a logged-in browser state once, then use it for the crawl and every flow:
 
 ```js
-// login.mjs: `node login.mjs` writes auth.json (credentials from env, never in the spec)
+// login.mjs: `TEST_EMAIL=... TEST_PASSWORD=... node login.mjs` writes auth.json (credentials from env, never in the spec)
 import { chromium } from "playwright";
 const b = await chromium.launch(); const p = await b.newPage();
 await p.goto("http://localhost:3000/sign-in");
@@ -40,6 +40,9 @@ await p.context().storageState({ path: "auth.json" }); await b.close();
 - Crawl with it: `npx quicke2e discover http://localhost:3000 --storage auth.json`. Without it, the map has only the signed-out pages.
 - In each flow that needs the login: `storageState: "auth.json"`. One file per role (`customer.json`, `admin.json`).
 - Re-run `login.mjs` after every database reset: a reseed deletes the sessions, and a stale `auth.json` sends every run to the sign-in page.
+- A cookie banner or welcome dialog in front of the login form: accept or close it in `login.mjs` before filling the form. The saved `auth.json` then also stores the consent, so the runs start without the banner.
+- `storageState` does not keep `sessionStorage`. If the app keeps the session or cart there, log in inside the flow instead.
+- If `getByLabel("Password")` matches two elements (a "show password" button), use `getByLabel("Password", { exact: true })`.
 
 ## 2. Read the rules in the source
 
@@ -114,11 +117,15 @@ Rules for the assertion — the assertion IS the test:
 - Assert only what is true AFTER the work: a URL that cannot exist before, text that did not exist before, or a control state via `expectState: [{ role, name, value | checked | selected }]`.
 - `expect` is text a sighted user sees. It ignores form controls (a value the test typed or chose is not a result) and hidden text. To check a chosen option or a field's value, use `expectState`. For a toast that disappears, use `expectSeen`.
 - Never assert a label, a button text, or a word that is on the page anyway.
+- A delete: `expectGone: ["<the item's text>"]` (it may be on the start page; it must be gone at the end), plus the empty state or a success toast. `expectAbsent` is for text that must never appear.
+- `expect` ignores case. To test that the app normalizes case (an email stored in lower case), assert a control's value with `expectState`, or a page that shows the stored value exactly where only that value can appear.
+- A value of only spaces (`"   "`) is typed as it is. An empty string (`""`) means "leave the field empty".
+- A spec that creates data (a signup, a new item) needs a fresh value or a reset per run: use `--reset`, and make generated values unique (`Date.now()` is evaluated once per `quicke2e` process).
 - For a refusal, assert the refusal text AND that the success state is absent: `expectAbsent` holds text only success shows. `check` rejects an `expectAbsent` text that is already on the start page (`ABSENT_ON_START`).
-- A load attack (the start URL itself is the attack) needs `control`: a page where the app says yes. `check` then runs the `WEAK_ASSERTION` check on the control page, and the run checks the assertion on the start page before any step.
+- A load attack (the start URL itself is the attack) needs `control`: a page where the app says yes. `check` then runs the `WEAK_ASSERTION` check on the control page, and requires each `expectAbsent` text to BE on the control page (the success marker must be real). The run decides on the start page and never clicks: if the refusal is not there, the outcome is `NOT_REFUSED`.
 - A value the app may accept (a script tag in a name field) is not a refusal case: assert that the next page shows the value as plain text.
 - Say the attack value and every action in the goal ("replace the name on tickets with only spaces, then pay"). With "the given value" the engine did not type into the field (measured: MODEL_BLOCKED 2/2; with the value named, 2/2 passed).
-- **Every refusal case gets `neverClick` for its success action** (`"Pay*"`, `"Place order*"`, `"Delete*"`). If the app wrongly accepts, or the browser blocks the form first, the run then fails without buying, paying or deleting. Measured: a refusal case without it placed a real order.
+- **Every refusal case gets `neverClick` for its success action** (`"Pay*"`, `"Place order*"`, `"Delete*"`). If the app wrongly accepts, or the browser blocks the form first, the run then fails without buying, paying or deleting. Measured: a refusal case without it placed a real order. Exception: when the app refuses ON that click (a server-side check behind "Place order"), the click is the test, so do not list it; use a throwaway database instead. A failed run with `neverClick hid: "..."` tells you this happened.
 - Browser validation (`min`, `max`, `required`, `type=email`) blocks a submit before the app sees it, and its bubble is not page text. Read these attributes in the source before you write a refusal case for them; such a rule is usually tested at a lower level.
 - A dropdown takes its value from `inputs` too: key = words from its label, value = the option's visible text.
 - Field keys in `inputs` must match the field label ("email" matches "Email"). Labels that share a substring ("Email" and "Billing email") get the same value: give such fields distinct keys or avoid the case.

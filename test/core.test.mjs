@@ -161,8 +161,10 @@ test("codegen: a spec key with a space emits valid bracket access; a secret key 
   const { code } = generate(rec, flow);
   assert.match(code, /fill\(INPUTS\["discount code"\]\)/);
   assert.ok(!code.includes("Pw123456!"));
-  // v0.4: a missing secret skips THIS test (it used to throw at import and stop the whole file)
-  assert.match(code, /test\.skip\(!process\.env\.T_PASSWORD,/);
+  // v0.4: a missing secret skips THIS test (it used to throw at import and stop the whole file);
+  // v0.5: with CI set it fails instead, so a CI run without the secret is not green
+  assert.match(code, /if \(!process\.env\.T_PASSWORD && !process\.env\.QUICKE2E_PASSWORD\) \{ if \(process\.env\.CI\) throw new Error\(/);
+  assert.match(code, /test\.skip\(true,/);
   assert.ok(!/missing\(/.test(code));
 });
 
@@ -303,7 +305,8 @@ test("CLI check: control replaces the start page in the WEAK_ASSERTION check; ex
 test("codegen: expectAbsent becomes a not.toContainText on the user-visible text", () => {
   const flow = { name: "t", start: "/attack-code.html", expect: ["This code has expired."], expectAbsent: ["SUMMER25 25%"] };
   const { code, sidecar } = generate({ passed: true, outcome: "DONE_VERIFIED", engine: "jev", base, wallMs: 1, steps: [] }, flow);
-  assert.match(code, /expect\(await seenText\(page\)\)\.not\.toContain\("SUMMER25 25%"\)/);   // v0.4: same text function as the run
+  assert.match(code, /\(await seenText\(page\)\)\)\.toLowerCase\(\)\)\.not\.toContain\("summer25 25%"\)/);   // v0.5: recorder text + current text
+  assert.match(code, /addInitScript/);   // v0.4: same text function as the run; v0.5: case-insensitive
   assert.deepEqual(sidecar.expectAbsent, ["SUMMER25 25%"]);
 });
 
@@ -459,4 +462,62 @@ test("v0.4 auth: a flow with storageState whose start page redirects to sign-in 
   assert.equal(rec.passed, false);
   assert.equal(rec.steps.length, 0);
   assert.match(rec.error, /storageState is missing or expired/);
+});
+
+test("v0.5 ARIA slider: offered for typing, named by a free <label>, set with the arrow keys", async () => {
+  const { SET_SLIDER } = await import("../src/loop.mjs");
+  const page = await browser.newPage();
+  await page.setContent(`<div><div class="lc"><label for="volume">Volume</label></div><div class="cc"><div><div>
+    <div id="h" role="slider" tabindex="0" style="width:20px;height:20px;background:#888" aria-valuemin="0" aria-valuemax="100" aria-valuenow="20"></div></div></div></div></div>
+    <script>h.addEventListener("keydown", (e) => { const v = +h.getAttribute("aria-valuenow");
+      if (e.key === "ArrowRight") h.setAttribute("aria-valuenow", Math.min(100, v + 10));
+      if (e.key === "ArrowLeft") h.setAttribute("aria-valuenow", Math.max(0, v - 10)); });</script>`);
+  const s = await page.evaluate(`(${SNAPSHOT})()`);
+  const f = s.actions.find((a) => a.kind === "fill" && a.role === "slider");
+  assert.ok(f, JSON.stringify(s.actions));
+  assert.equal(f.label, "Volume");
+  assert.equal(f.value, "20");
+  const set = new Function(`return ${SET_SLIDER}`)();
+  await set(page.locator("#h"), "70");
+  assert.equal(await page.locator("#h").getAttribute("aria-valuenow"), "70");
+  await assert.rejects(() => set(page.locator("#h"), "75"));   // not a step value: stops instead of looping
+  await page.close();
+});
+
+test("v0.5 icon-only buttons: named from the icon, an ancestor title or the pager position, never from type", async () => {
+  const page = await browser.newPage();
+  const sz = "style='display:inline-block;width:20px;height:20px'";
+  await page.setContent(`<ul class="ant-pagination"><li title="Previous Page"><button type="button" ${sz}></button></li>
+    <li title="2"><a rel="nofollow">2</a></li><li title="Next Page"><button type="button" ${sz}></button></li></ul>
+    <div class="m-Pagination-root"><button type="button" ${sz}><svg width="10" height="10"></svg></button><button>1</button><button>2</button>
+      <button type="button" ${sz}><svg width="10" height="10"></svg></button></div>
+    <button type="button" ${sz}><span role="img" aria-label="delete"></span></button>`);
+  const labels = (await page.evaluate(`(${SNAPSHOT})()`)).actions.map((a) => a.label);
+  for (const want of ["Previous Page", "2", "Next Page", "previous page", "next page", "delete"]) assert.ok(labels.includes(want), `${want} in ${JSON.stringify(labels)}`);
+  assert.ok(!labels.includes("button"), JSON.stringify(labels));
+  await page.close();
+});
+
+test("v0.5 text assertions ignore case (CSS text-transform)", async () => {
+  const page = await browser.newPage();
+  await page.setContent(`<h2 style="text-transform:uppercase">Enter Account Information</h2>`);
+  const { checkGoal } = await import("../src/loop.mjs");
+  assert.equal(await checkGoal(page, { expect: ["Enter Account Information"] }), true);
+  assert.equal(await checkGoal(page, { expect: ["ENTER ACCOUNT INFORMATION"] }), true);
+  assert.equal(await checkGoal(page, { expect: ["Account closed"] }), false);
+  await page.close();
+});
+
+test("v0.5 visible text: display:contents wrappers (SvelteKit) count; expectSeen skips scripts and invisible text", async () => {
+  const L = await import("../src/loop.mjs");
+  const ctx = await browser.newContext(); await ctx.addInitScript(L.SEEN_RECORDER);
+  const page = await ctx.newPage();
+  await page.setContent(`<div style="display: contents"><h1>Account created</h1></div>`);
+  assert.equal(await L.checkGoal(page, { expect: ["Account created"] }), true);
+  await page.setContent(`<script type="application/json">{"saved":"Settings saved"}</script><button id=b>Save</button>
+    <div id=t style="opacity:0"></div><script>b.onclick = () => { t.textContent = "Order placed"; };</script>`);
+  await page.click("#b"); await page.waitForTimeout(1200);
+  assert.equal(await L.checkGoal(page, { expectSeen: ["Settings saved"] }), false);
+  assert.equal(await L.checkGoal(page, { expectSeen: ["Order placed"] }), false);
+  await ctx.close();
 });

@@ -7,10 +7,15 @@ import module from "node:module";
 // PERF: V8 code cache for Playwright's modules (Node >= 22.1; ~50 ms per start once the cache is warm).
 // It must be on before the first import of playwright, so the loop is imported dynamically.
 module.enableCompileCache?.();
-const { chromium, runOnce, SNAPSHOT, settle, checkGoal, absentSeen } = await import("../src/loop.mjs");
+const { chromium, runOnce, SNAPSHOT, settle, checkGoal, absentSeen, trackNetwork } = await import("../src/loop.mjs");
 
 const PKG = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const out = (s = "") => process.stdout.write(s + "\n");
+// Every printed line: no credentials from a URL (http://user:pass@host, a password may contain "@"), and
+// no terminal control characters from page text (a label with ESC sequences could rewrite a FAIL line
+// as PASS on screen: security test W6).
+const hideCreds = (t) => String(t ?? "").replace(/(https?:\/\/)[^\/\s"]*@/gi, "$1");
+const cleanLine = (t) => hideCreds(t).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+const out = (s = "") => process.stdout.write(cleanLine(s) + "\n");
 const die = (msg, code = 2) => { process.stderr.write(msg + "\n"); process.exit(code); };
 const stripAnsi = (t) => String(t ?? "").replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 
@@ -35,7 +40,7 @@ const HELP = {
   "--inputs": "JSON file with form values for the crawl", "--storage": "Playwright storage-state file (logged-in crawl)",
   "-o": "output map file (default quicke2e.map.json)", "--redact": "CSS selector or /regex/ the engine must never see (repeatable)",
   "--max-pages": "page limit (default 40)", "--base": "app base URL (default $APP_BASE, then http://localhost:3000)",
-  "--engine": "jev (default, needs OPENROUTER_API_KEY) | vercel (AI_GATEWAY_API_KEY) | local (local-engine/server.py)",
+  "--engine": "jev (default, needs OPENROUTER_API_KEY) | vercel (AI_GATEWAY_API_KEY) | local (local-engine/server.py from the GitHub repo, not in the npm package)",
   "--map": "map file from discover", "--runs": "runs per flow (default 1)", "--emit": "write a Playwright spec for each passing run",
   "--trace": "write a JSON trace per run", "--video": "save a WebM recording per run",
   "--allow-weak": "run a flow that failed the WEAK_ASSERTION check", "--only": "run only the flow with this name",
@@ -64,6 +69,7 @@ const closest = (x, list) => list.map((c) => [lev(x, c), c]).sort((p, q) => p[0]
 
 const raw = process.argv.slice(2);
 if (raw[0] === "--version" || raw[0] === "-v") { out(PKG.version); process.exit(0); }
+if (raw[0] === "help" && COMMANDS[raw[1]]) { out(usageText(raw[1])); process.exit(0); }   // "quicke2e help run"
 if (!raw.length || raw[0] === "--help" || raw[0] === "-h" || raw[0] === "help") { out(usageText()); process.exit(raw.length ? 0 : 2); }
 const cmd = raw[0];
 if (!COMMANDS[cmd]) {
@@ -73,8 +79,11 @@ if (!COMMANDS[cmd]) {
 const known = { ...COMMANDS[cmd].flags, ...COMMON };
 const opts = {}, many = {}, positional = [];
 for (let i = 1; i < raw.length; i++) {
-  const a = raw[i];
+  let a = raw[i];
   if (!a.startsWith("-") || a === "-") { positional.push(a); continue; }
+  // --base=http://x works like --base http://x
+  const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+  if (eq > 0 && known[a.slice(0, eq)] && known[a.slice(0, eq)] !== "bool") { raw.splice(i + 1, 0, a.slice(eq + 1)); a = a.slice(0, eq); }
   const kind = known[a];
   if (!kind) {
     const s = closest(a, Object.keys(known));
@@ -106,20 +115,85 @@ async function launch() {
   }
 }
 
+// SPEC VALIDATION (launch test 2026-10-07). A string where an array belongs was read character by
+// character (expect "Your todos" became 10 one-letter assertions, all held); expectAbsent as a string was
+// ignored, so an attack spec could never find the attack; a misspelled "expected" left a flow with no
+// assertion at all; start as a full URL failed as "Is the app running?". Catch them before any run.
+const FIELDS = ["name", "start", "base", "goal", "inputs", "expectUrl", "expect", "expectState", "expectSeen", "expectAbsent", "expectGone",
+  "control", "kind", "redact", "storageState", "maxSteps", "neverClick", "minConfidence", "dialog", "navTimeout", "maxTimeMs", "done",
+  "allowServerErrors"];
+function specProblems(f) {
+  const out = [];
+  for (const k of Object.keys(f)) if (!FIELDS.includes(k)) {
+    const s = { timeout: "navTimeout or maxTimeMs", url: "start or expectUrl", value: "inputs", values: "inputs", steps: "maxSteps" }[k] ?? closest(k, FIELDS);
+    out.push(s ? `unknown field "${k}" (did you mean "${s}"?)` : `unknown field "${k}"`);
+  }
+  const strs = (k) => { if (f[k] != null && !(Array.isArray(f[k]) && f[k].every((x) => typeof x === "string"))) out.push(`"${k}" must be an array of strings, e.g. ${k}: ["Order placed"]`); };
+  strs("expect"); strs("expectSeen"); strs("expectAbsent"); strs("expectGone");
+  for (const k of ["neverClick", "redact"]) if (f[k] != null && !(Array.isArray(f[k]) && f[k].every((x) => typeof x === "string" || x instanceof RegExp)))
+    out.push(`"${k}" must be an array of strings or RegExps`);
+  if (f.expectState != null && !(Array.isArray(f.expectState) && f.expectState.every((x) => x && typeof x === "object" && !Array.isArray(x))))
+    out.push(`"expectState" must be an array of objects, e.g. expectState: [{ role: "combobox", name: "Plan", value: "Pro" }]`);
+  if (f.expectUrl != null && !(typeof f.expectUrl === "string" || f.expectUrl instanceof RegExp)) out.push(`"expectUrl" must be a string or a RegExp`);
+  if (f.inputs != null && (typeof f.inputs !== "object" || Array.isArray(f.inputs))) out.push(`"inputs" must be an object of label: value pairs`);
+  for (const k of ["start", "control"]) if (f[k] != null && !(typeof f[k] === "string" && f[k].startsWith("/")))
+    out.push(`"${k}" must be a path that starts with "/" (put the origin in --base or "base"), got ${JSON.stringify(f[k])}`);
+  if (typeof f.goal !== "string") out.push(`"goal" must be a string`);
+  // numbers and enums (wave-2 test W1: navTimeout "30s" surfaced as "UNREACHABLE ... Is the app running?")
+  const num = (k, ok, what) => { if (f[k] != null && !(typeof f[k] === "number" && ok(f[k]))) out.push(`"${k}" must be ${what}, got ${JSON.stringify(f[k])}`); };
+  num("maxSteps", (v) => Number.isInteger(v) && v > 0, "a whole number above 0");
+  num("navTimeout", (v) => v > 0, "a number of milliseconds");
+  num("maxTimeMs", (v) => v > 0, "a number of milliseconds");
+  num("minConfidence", (v) => v >= 0 && v <= 1, "a number from 0 to 1");
+  if (f.dialog != null && !["accept", "dismiss"].includes(f.dialog)) out.push(`"dialog" must be "accept" or "dismiss"`);
+  if (f.kind != null && typeof f.kind !== "string") out.push(`"kind" must be a string`);
+  if (typeof f.expectUrl === "string") {
+    try { new RegExp(f.expectUrl); } catch (e) { out.push(`"expectUrl" is not a valid regex: ${e.message.replace(/^Invalid regular expression: /, "")}`); }
+    // "?" before "name=" is a regex quantifier: "/login?welcome=1" never matches /login?welcome=1
+    if (/[^\\]\?[\w-]+=/.test(f.expectUrl)) out.push(`"expectUrl" is a regex: escape "?" as "\\?" (got ${JSON.stringify(f.expectUrl)})`);
+  }
+  for (const w of Array.isArray(f.expectState) ? f.expectState : [])
+    for (const b of ["checked", "selected", "expanded"]) if (w && w[b] != null && typeof w[b] !== "boolean") out.push(`"expectState" ${b} must be true or false, got ${JSON.stringify(w[b])}`);
+  if (["expectUrl", "expect", "expectState", "expectSeen", "expectAbsent", "expectGone"].every((k) => f[k] == null || (Array.isArray(f[k]) && !f[k].length)))
+    out.push(`no assertion: add expectUrl, expect, expectState, expectSeen, expectAbsent or expectGone (code decides pass or fail from them)`);
+  return out;
+}
 async function loadFlows(file) {
   const abs = path.resolve(file);
   if (!fs.existsSync(abs)) die(`spec file not found: ${file}\nA spec exports an array of flows: https://github.com/dmoka/quicke2e/blob/main/AGENTS.md#write-a-spec`);
   let m;
   try { m = await import(pathToFileURL(abs).href); }
-  catch (e) { die(`cannot load ${file}: ${stripAnsi(e.message || e).split("\n")[0]}`); }
+  catch (e) {
+    const ts = e?.code === "ERR_UNKNOWN_FILE_EXTENSION" && /\.[cm]?ts$/.test(file);
+    die(`cannot load ${file}: ${stripAnsi(e.message || e).split("\n")[0]}`
+      + (ts ? `\nTypeScript specs need Node 22.18+ (or NODE_OPTIONS=--experimental-strip-types). Or name the file .mjs.` : "")
+      + (/Unexpected token 'export'|module is not defined/.test(String(e.message)) ? `\nUse the .mjs extension for an ESM spec (export default [...]).` : "")); }
   const v = m.default ?? m.flows ?? m.FLOWS;
   if (v == null) die(`${file} has no default export. Use: export default [{ name, goal, ... }]`);
   const flows = Array.isArray(v) ? v : [v];
+  if (!flows.length) die(`${file} exports no flows. Use: export default [{ name, goal, ... }]`);
   const bad = flows.filter((f) => !f || !f.name || !f.goal);
   if (bad.length) die(`${file}: every flow needs "name" and "goal" (${bad.length} without them).`);
+  // storageState: a path is read relative to the working folder, else to the spec file; a missing file is
+  // named here (launch test 2026-10-07: it surfaced as "UNREACHABLE ... Is the app running?").
+  for (const f of flows) if (typeof f.storageState === "string" && !fs.existsSync(f.storageState)) {
+    const near = path.resolve(path.dirname(abs), f.storageState);
+    if (fs.existsSync(near)) { Object.defineProperty(f, "storageStateSpec", { value: f.storageState, enumerable: false }); f.storageState = near; }
+    else die(`${file}: ${f.name}: storageState file not found: ${path.resolve(f.storageState)}${near !== path.resolve(f.storageState) ? ` (or ${near})` : ""}. Save one with the login recipe in SKILL.md.`);
+  }
   const only = opt("--only");
-  const picked = only ? flows.filter((f) => f.name === only) : flows;
-  if (!picked.length) die(`no flow named "${only}" in ${file}. Flows: ${flows.map((f) => f.name).join(", ")}`);
+  // --only a,b runs several flows (wave-2 test W2: a second --only replaced the first)
+  const want = only ? String(only).split(",").map((x) => x.trim()).filter(Boolean) : null;
+  const picked = want ? flows.filter((f) => want.includes(f.name)) : flows;
+  const missingNames = want ? want.filter((n) => !flows.some((f) => f.name === n)) : [];
+  if (!picked.length || missingNames.length) die(`no flow named "${missingNames[0] ?? only}" in ${file}. Flows: ${flows.map((f) => f.name).join(", ")}`);
+  // compared as file names (Windows and macOS file systems ignore case; "a/b" and "a:b" both become "a-b")
+  const fkey = (n) => fileName(n).toLowerCase();
+  const dup = [...new Set(flows.map((f) => f.name).filter((n, i, all) => all.findIndex((m) => fkey(m) === fkey(n)) !== i))];
+  // Only the flows that will run are checked: with --only, a broken neighbour does not block the run.
+  const problems = [...(dup.length && !only ? [`  duplicate flow names: ${dup.join(", ")} (names must be unique: --only, --emit and traces use them)`] : []),
+    ...picked.flatMap((f) => specProblems(f).map((p) => `  ${f.name}: ${p}`))];
+  if (problems.length) die(`${file}: ${problems.length} problem${problems.length > 1 ? "s" : ""} in the spec\n${problems.join("\n")}\nFields: https://github.com/dmoka/quicke2e#reference`);
   return picked;
 }
 
@@ -136,7 +210,7 @@ async function preflightEngine(engine) {
   if (engine === "local") {
     const url = process.env.LOCAL_URL || "http://127.0.0.1:8822";
     const ok = await fetch(url, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok).catch(() => false);
-    if (!ok) die(`The local engine does not answer at ${url}. Start it: python local-engine/server.py (see local-engine/README.md), or set LOCAL_URL.`);
+    if (!ok) die(`The local engine does not answer at ${url}. Start it from a clone of https://github.com/dmoka/quicke2e: python local-engine/server.py (see local-engine/README.md), or set LOCAL_URL.`);
   }
 }
 
@@ -148,11 +222,16 @@ async function weak(flow, base, browser) {
   const ctx = await browser.newContext({ ...(flow.storageState ? { storageState: flow.storageState } : {}) });
   if (flow.expectSeen?.length) await ctx.addInitScript("window.__jevSeen = [];");
   const page = await ctx.newPage();
+  const netQuiet = trackNetwork(page);
   try {
     await page.goto(base.replace(/\/$/, "") + at, { waitUntil: "domcontentloaded", ...(navTimeout || flow.navTimeout ? { timeout: flow.navTimeout ?? navTimeout } : {}) });
-    await settle(page);
+    await netQuiet(); await settle(page);
     const snap = await page.evaluate(`(${SNAPSHOT})()`);
-    return { at, weak: await checkGoal(page, flow, snap), absent: flow.control ? null : await absentSeen(page, flow) };
+    // On the control page (the app says yes) every expectAbsent text must BE there: that proves the
+    // success marker is real and its wording right (wave-2 test W4).
+    const markerMissing = flow.control && flow.expectAbsent?.length
+      ? (await Promise.all(flow.expectAbsent.map(async (x) => (await absentSeen(page, { expectAbsent: [x] }, { loose: true })) ? null : x))).find(Boolean) ?? null : null;
+    return { at, weak: await checkGoal(page, flow, snap), absent: flow.control ? null : await absentSeen(page, flow, { loose: true }), markerMissing };
   } finally { await ctx.close(); }
 }
 
@@ -160,6 +239,9 @@ async function weak(flow, base, browser) {
 // actions that failed, required fields left empty, a loop.
 function why(rec) {
   const lines = [];
+  // The run threw before the app could be judged: the error line says why; app reasons would mislead.
+  if (["ERROR", "ENGINE_ERROR"].includes(rec.outcome)) return lines;
+  if (rec.startStatus) lines.push(`the start page answered HTTP ${rec.startStatus}${[401, 403].includes(rec.startStatus) ? ": it needs a login (storageState) or basic-auth credentials in the base URL" : ""}`);
   for (const a of rec.assertions || []) if (!a.held) lines.push(`not met: ${a.kind} ${JSON.stringify(a.value)}${a.actual != null ? ` (was ${JSON.stringify(a.actual)})` : ""}`);
   if (rec.loop) lines.push(`loop: ${rec.loop.op} "${rec.loop.label}" ran ${rec.loop.times}x on an unchanged page; stopped before the next one`);
   for (const h of rec.heldBack || []) lines.push(h.key
@@ -167,15 +249,28 @@ function why(rec) {
     : `held back: "${h.label}" until "${h.waitingFor}" is set; the spec has no key for it: add "${String(h.waitingFor).toLowerCase()}": "<value>" to inputs`);
   if (rec.lowConfidence) lines.push(`low confidence: the engine's picks stayed under ${rec.minConfidence} (best ${rec.lowConfidence.confidence} for ${rec.lowConfidence.op} "${rec.lowConfidence.label}")`);
   if (rec.failedActions?.length) lines.push(`actions that failed: ${rec.failedActions.map((f) => `${f.op} "${f.label}"`).join(", ")}`);
+  for (const e of rec.pageErrors || []) lines.push(`page says: "${e}"`);
+  for (const o of rec.unmatchedOptions || []) lines.push(`inputs.${o.key} "${o.value}" matches no option of "${o.field}" (${o.options.join(", ")})`);
+  if (rec.unkeyedFields?.length) lines.push(`fields with no spec value: ${rec.unkeyedFields.map((x) => `"${x}"`).join(", ")} (add a key named like the field label to inputs)`);
+  if (rec.unusedInputs?.length) lines.push(`spec keys never used: ${rec.unusedInputs.join(", ")} (no field label contains the key)`);
+  if (rec.networkErrors?.length) lines.push(`network: ${rec.networkErrorCount} request(s) failed (${rec.networkErrors.join(", ")}): did the app stop?`);
+  if (rec.coveredBy) lines.push(`covered: "${rec.coveredBy.label}" could not be clicked; "${rec.coveredBy.by}" lies over it (a cookie banner or popup? name it in the goal: "Accept the cookies, then ...")`);
+  if (rec.neverHidden?.length) lines.push(`neverClick hid: ${rec.neverHidden.map((l) => `"${l}"`).join(", ")} (the engine could not pick it; if the app's refusal comes from that click, remove it from neverClick)`);
   if (rec.emptyRequired?.length) lines.push(`required fields still empty: ${rec.emptyRequired.map((x) => `"${x}"`).join(", ")}`);
   return lines;
 }
 
 if (cmd === "discover") {
-  const base = positional[0];
+  let base = positional[0];
+  if (base && !/^https?:\/\//.test(base)) base = "http://" + base;
+  // Git Bash (MSYS) rewrites "/admin" to "C:/Program Files/Git/admin" (platform test W7)
+  if ((opt("--start") || "").split(",").some((x) => /^[A-Za-z]:[\\/]/.test(x)))
+    die(`--start got a Windows path (${opt("--start")}): Git Bash turned "/..." into a file path. Run with MSYS_NO_PATHCONV=1, or from PowerShell or cmd.`);   // "127.0.0.1:9100" works like in run
   const { discover } = await import("../src/discover.mjs");
   const { parseRedactArg } = await import("../src/redact.mjs");
-  const inputs = opt("--inputs") ? JSON.parse(fs.readFileSync(opt("--inputs"), "utf8")) : {};
+  let inputs = {};
+  if (opt("--inputs")) try { inputs = JSON.parse(fs.readFileSync(opt("--inputs"), "utf8")); }
+    catch (e) { die(`--inputs ${opt("--inputs")}: ${e.code === "ENOENT" ? "file not found" : "not valid JSON (" + e.message + ")"}`); }
   const dbrowser = await launch();
   const map = await discover({ base, browser: dbrowser, start: (opt("--start", "/")).split(","), mode: flag("--safe") ? "safe" : "full",
     allowRemote: flag("--i-own-this-data"), reset: opt("--reset"), storageState: opt("--storage"), inputs,
@@ -183,6 +278,9 @@ if (cmd === "discover") {
     redact: (many["--redact"] || []).map(parseRedactArg) });
   await dbrowser.close();
   const file = opt("-o", "quicke2e.map.json");
+  // An app that is down gives 0 pages: say so, and keep the map file that is there (launch test 2026-10-07).
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  if (!map.pages.length) { out(`UNREACHABLE: no page loaded from ${base}. Is the app running? ${fs.existsSync(file) ? file + " was not changed." : ""}`); process.exit(1); }
   fs.writeFileSync(file, JSON.stringify(map, null, 2));
   out(`\n${map.pages.length} pages, ${map.edges.length} edges, ${map.pages.reduce((n, p) => n + p.forms.length, 0)} forms in ${(map.ms / 1000).toFixed(1)}s -> ${file}`);
   process.exit(0);
@@ -191,23 +289,35 @@ if (cmd === "discover") {
 // run / check
 const file = positional[0];
 const flows = await loadFlows(file);
-const base = opt("--base", process.env.APP_BASE || "http://localhost:3000");
+if (/\.(spec\.)?[jt]s$/.test(opt("--emit") || "")) die(`--emit takes a folder (one <flow>.spec.ts per passing flow), got ${opt("--emit")}`);
+let base = opt("--base", process.env.APP_BASE || "http://localhost:3000");
+if (!/^https?:\/\//i.test(base)) base = "http://" + base;   // "127.0.0.1:9200" works, as in discover
+// Launch test 2026-10-07: with no base, a run drove an unrelated app on :3000. Say which app is driven.
+if (!opt("--base") && !process.env.APP_BASE && flows.some((f) => !f.base)) out(`note: no --base or APP_BASE: using ${base}`);
+// A flow name becomes a file name (--trace, --emit): "auth/login" must not point into a missing folder.
+function fileName(name) { return String(name).replace(/[\x00-\x1f\/\\:*?"<>|]+/g, "-").slice(0, 100); }   // control chars, length: Windows
 const engine = opt("--engine", "jev");
 const runs = Number(opt("--runs", 1));
-if (!(runs >= 1)) die(`--runs needs a number of at least 1.`);
+if (!(Number.isInteger(runs) && runs >= 1)) die(`--runs needs a whole number of at least 1.`);
 const minConfidence = opt("--min-confidence") != null ? Number(opt("--min-confidence")) : undefined;
 const navTimeout = opt("--nav-timeout") != null ? Number(opt("--nav-timeout")) : undefined;
 if (navTimeout != null && !(navTimeout > 0)) die("--nav-timeout needs a number of milliseconds.");
 if (minConfidence != null && !(minConfidence >= 0 && minConfidence <= 1)) die("--min-confidence needs a number between 0 and 1.");
 if (cmd === "run") await preflightEngine(engine);
-const map = opt("--map") ? JSON.parse(fs.readFileSync(opt("--map"), "utf8")) : null;
+let map = null;
+if (opt("--map")) try { map = JSON.parse(fs.readFileSync(opt("--map"), "utf8")); }
+  catch (e) { die(`--map ${opt("--map")}: ${e.code === "ENOENT" ? "file not found (make one with: quicke2e discover <baseUrl>)" : "not valid JSON (" + e.message + ")"}`); }
 const browser = await launch();
-let failed = 0;
+let failed = 0, keyRejected = false;
 const all = [];
-const skipped = (flow, outcome, error) => ({ flow: flow.name, base: flow.base || base, engine, outcome, passed: false, error,
-  finalUrl: null, steps: [], wallMs: 0, cost: 0 });
+// A flow that never ran still has the fields AGENTS.md documents (assertions, kind), so agents can read
+// every record the same way (launch test 2026-10-07: r.assertions.filter threw on WEAK_ASSERTION).
+const skipped = (flow, outcome, error) => ({ flow: flow.name, ...(flow.kind ? { kind: flow.kind } : {}),
+  base: String(flow.base || base).replace(/^(https?:\/\/)[^\/@\s]+@/i, "$1"), engine, outcome, passed: false, error,
+  finalUrl: null, steps: [], assertions: [], wallMs: 0, cost: 0 });
 const { weakSecretKeys } = await import("../src/secret.mjs");
 for (const flow of flows) {
+  if (keyRejected) break;
   const fbase = flow.base || base;
   const weakKeys = weakSecretKeys(flow.inputs);
   if (weakKeys.length) out(`note: ${flow.name}: ${weakKeys.join(", ")} ${weakKeys.length > 1 ? "are" : "is a"} weak secret${weakKeys.length > 1 ? "s" : ""}`
@@ -216,6 +326,11 @@ for (const flow of flows) {
   const unreachableMsg = (e) => `${fbase.replace(/\/$/, "")}${flow.control || flow.start || "/"} (${stripAnsi(e.message || e).split("\n")[0].replace(/^page\.goto: /, "")}). Is the app running?`;
   // Prints the WEAK_ASSERTION / ABSENT_ON_START line; true when the flow must not run.
   const weakStop = (w) => {
+    if (w.markerMissing) {
+      const msg = `"${w.markerMissing}" is not on the control page ${w.at}: expectAbsent must name the text the app shows when it says yes`;
+      out(`WEAK_ASSERTION  ${flow.name}: ${msg}`);
+      if (cmd === "check" || !flag("--allow-weak")) { all.push(skipped(flow, "WEAK_ASSERTION", msg)); failed++; return true; }
+    }
     if (!(w.weak || w.absent)) return false;
     const msg = w.absent ? `"${w.absent}" is already visible on ${w.at}. expectAbsent must name a state only success reaches.`
       : flow.control ? `the assertion is also true on the control page ${w.at}, so it cannot tell a refusal from a success.`
@@ -236,7 +351,7 @@ for (const flow of flows) {
     if (cmd === "check") { out(`ok              ${flow.name}`); all.push({ ...skipped(flow, "OK", null), passed: true }); continue; }
   }
   for (let k = 0; k < runs; k++) {
-    const trace = opt("--trace") ? path.join(opt("--trace"), `${flow.name}-${Date.now()}.json`) : undefined;
+    const trace = opt("--trace") ? path.join(opt("--trace"), `${fileName(flow.name)}-${Date.now()}-${process.pid}.json`) : undefined;
     if (trace) fs.mkdirSync(opt("--trace"), { recursive: true });
     if (opt("--reset")) {
       const { execSync } = await import("node:child_process");
@@ -257,19 +372,46 @@ for (const flow of flows) {
     if (!rec.passed) failed++;
     out(`${rec.passed ? "PASS" : "FAIL"}  ${flow.name.padEnd(28)} ${String(rec.steps.length).padStart(2)} steps  `
       + `${(rec.wallMs / 1000).toFixed(1).padStart(5)}s  $${rec.cost.toFixed(5)}  ${rec.outcome}`
-      + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (rec.httpStatus ? `  HTTP ${rec.httpStatus}` : "") + (flow.kind ? `  (${flow.kind})` : "")
+      + (rec.absentSeen ? `  saw ${JSON.stringify(rec.absentSeen)}` : "") + (rec.httpStatus ? `  HTTP ${rec.httpStatus}${rec.apiError ? ` (${rec.apiError.method} ${rec.apiError.path})` : ""}` : "") + (flow.kind ? `  (${flow.kind})` : "")
       + (rec.route?.hops?.length ? `  via map -> ${rec.route.pattern}` : "") + (rec.error ? `  ${rec.error}` : ""));
     if (!rec.passed) for (const l of why(rec)) out(`      ${l}`);
+    // A pass with a step that could not be done is still a pass (code checks the assertions), but say so:
+    // a file input that could not take its file passed with no attachment (launch test 2026-10-07).
+    if (rec.passed) { const bad = [...new Set(rec.steps.filter((x) => x.stale).map((x) => `${x.op} "${x.label}"`))];
+      if (bad.length) out(`      note: actions that failed on the way: ${bad.join(", ")}`); }
+    // A pass that never used a spec value: the assertions may hold before the goal is done (wave-2 W3:
+    // an "only spaces" attack passed without typing its value).
+    if (rec.passed && rec.unusedInputs?.length) out(`      note: spec keys never used: ${rec.unusedInputs.join(", ")}. Check that the assertions prove the goal.`);
+    // A rejected key fails every flow the same way: stop once, with the fix, instead of N identical FAILs.
+    if (rec.outcome === "ENGINE_ERROR" && [401, 403].includes(rec.engineStatus)) {
+      out(`stopped: the engine rejected the API key (HTTP ${rec.engineStatus}). Check ${engine === "vercel" ? "AI_GATEWAY_API_KEY" : "OPENROUTER_API_KEY"}.`);
+      keyRejected = true; break;
+    }
     for (const x of rec.slowSteps || []) out(`      slow: ${x.op} "${x.label}" took ${(x.ms / 1000).toFixed(1)} s`);
     if (rec.passed && opt("--emit")) {
       const { generate } = await import("../codegen/codegen.mjs");
       fs.mkdirSync(opt("--emit"), { recursive: true });
-      const f = path.join(opt("--emit"), `${flow.name}.spec.ts`);
-      try { fs.writeFileSync(f, generate(rec, flow).code); out(`      emitted ${f}  (run: npx playwright test ${f}; needs @playwright/test)`); }
+      const f = path.join(opt("--emit"), `${fileName(flow.name)}.spec.ts`);
+      // forward slashes: Playwright reads the argument as a regex, and "e2e\x.spec.ts" matched nothing on Windows
+      const fx = f.split(path.sep).join("/");
+      const { isSecretKey } = await import("../src/secret.mjs");
+      const envs = Object.keys(flow.inputs || {}).filter(isSecretKey).map((k) => `${flow.name}_${k}`.toUpperCase().replace(/[^A-Z0-9]+/g, "_"));
+      try { fs.writeFileSync(f, generate(rec, flow).code); out(`      emitted ${fx}  (run: npx playwright test ${fx}; needs @playwright/test${envs.length ? `; set ${envs.join(", ")} (skipped without it, fails with CI set)` : ""})`); }
       catch (e) { out(`      not emitted: ${e.message}`); }
     }
   }
 }
 await browser.close();
-if (flag("--json")) out(JSON.stringify(all));
-process.exit(failed ? 1 : 0);
+// One summary line for a suite (launch test: 45 runs ended with no total).
+if (cmd === "run" && all.length > 1) {
+  const ran = all.filter((r) => r.wallMs > 0), cost = all.reduce((n, r) => n + (r.cost || 0), 0);
+  out(`\n${all.filter((r) => r.passed).length} passed, ${all.filter((r) => !r.passed).length} failed  $${cost.toFixed(5)}  ${(ran.reduce((n, r) => n + r.wallMs, 0) / 1000).toFixed(1)}s`);
+}
+// Exit only after stdout has flushed: a pipe is written asynchronously on macOS and Linux, and
+// process.exit() cut --json at 64 KB (platform test W7: 70 runs, "Unterminated string in JSON").
+// exit 3: every failure was the engine's (timeout, 429/5xx), not the app's: CI can retry instead of
+// reporting a regression (wave-2 test W2)
+const engineOnly = failed && all.filter((r) => !r.passed).every((r) => r.outcome === "ENGINE_ERROR");
+const code = keyRejected ? 2 : engineOnly ? 3 : failed ? 1 : 0;
+if (flag("--json")) process.stdout.write(hideCreds(JSON.stringify(all)) + "\n", () => process.exit(code));
+else process.exit(code);
