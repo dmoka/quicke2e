@@ -713,7 +713,10 @@ export async function runOnce({ flow, engine = "local", budget = 30, browser: sh
   // VIDEO (--video dir): Playwright records the viewport; the step record then carries each step's
   // start time and the target's box, so a replay can show what was clicked and when. The video is
   // what the browser showed -- typed values included -- so it is written only when asked for.
-  const size = { width: 1280, height: 900 };
+  // QUICKE2E_VIEWPORT=1024x720: another browser size (the demo video records a smaller window, so the
+  // app shows larger in the same frame)
+  const vp = /^(\d+)x(\d+)$/.exec(process.env.QUICKE2E_VIEWPORT || "");
+  const size = vp ? { width: Number(vp[1]), height: Number(vp[2]) } : { width: 1280, height: 900 };
   const context = await browser.newContext({ viewport: size,
     ...(video ? { recordVideo: { dir: video, size } } : {}),
     ...(flow.storageState ? { storageState: flow.storageState } : {}), ...(ctxOpts || {}) });

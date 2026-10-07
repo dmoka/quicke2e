@@ -23,7 +23,10 @@ const FLOW = arg("flow", "book-with-code");
 const DB = process.env.DATABASE_URL || "postgres://ticketbay:local-dev-only@localhost:5432/ticketbay";
 const EVENT = "midnight-arcade-neon-tour";
 const flow = (await import(SPEC)).FLOWS.find((f) => f.name === FLOW);
-const SIZE = { width: 1280, height: 900 };
+// --viewport 1024x720: a smaller window shows the app larger in the video (passed to quicke2e as
+// QUICKE2E_VIEWPORT; Claude's browser uses the same size)
+const VP = /^(\d+)x(\d+)$/.exec(arg("viewport", "1280x900"));
+const SIZE = { width: Number(VP[1]), height: Number(VP[2]) };
 // --dark: TicketBay's own dark theme (next-themes keeps the choice in localStorage "theme"). Set in both
 // browsers before the first page loads; the app, the task and the checks are unchanged.
 const DARK = process.argv.includes("--dark");
@@ -63,7 +66,8 @@ async function jevArm(dir) {
   const t0 = Date.now();
   const lines = [];
   await run("node", [path.join(ROOT, "bin/quicke2e.mjs"), "run", SPEC_RUN, "--only", FLOW, "--base", BASE,
-    "--engine", ENGINE, "--headless", "--json", "--video", dir, "--trace", dir], {}, (l) => lines.push(l));
+    "--engine", ENGINE, "--headless", "--json", "--video", dir, "--trace", dir],
+    { env: { ...process.env, QUICKE2E_VIEWPORT: `${SIZE.width}x${SIZE.height}` } }, (l) => lines.push(l));
   const wallMs = Date.now() - t0;
   const rec = JSON.parse(lines.at(-1))[0];
   const video = rec.video.file;
