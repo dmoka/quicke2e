@@ -33,6 +33,8 @@
 
 *Recorded at 1× speed with the `local` engine (Shisa DE-1). Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
 
+Built by [Daniel Moka](https://www.linkedin.com/in/danielmoka/). I write about building software with AI agents in **[Craft Better Software](https://craftbettersoftware.com/)**, read by 200K+ engineers. [Subscribe](https://craftbettersoftware.com/) to get QuickE2E releases and the engineering behind them.
+
 | launch task, 5 runs per arm | median wall time | pass | cost / run |
 |---|---|---|---|
 | **QuickE2E, `local` engine, Shisa DE-1** | **2.94 s** | 5/5 | **$0** |
@@ -728,6 +730,10 @@ npm test     # the model-free test suite: no key, no cost
 
 On every push and pull request, CI runs the model-free suite and the local-engine prompt tests. When
 the repo has an `OPENROUTER_API_KEY` secret, CI also runs the fixture flows on the hosted Jev engine.
+
+## Author
+
+QuickE2E is built by Daniel Moka. Newsletter: [Craft Better Software](https://craftbettersoftware.com/), where QuickE2E releases and the engineering behind them come out first. Also on [LinkedIn](https://www.linkedin.com/in/danielmoka/) and [X](https://x.com/dmokafa).
 
 ## License
 
