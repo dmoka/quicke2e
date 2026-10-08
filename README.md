@@ -33,7 +33,7 @@
 
 *Recorded at 1× speed with the `local` engine (Shisa DE-1). Task: from the TicketBay home page, buy 2 tickets with the discount code WELCOME10.*
 
-Built by [Daniel Moka](https://www.linkedin.com/in/danielmoka/). I write about building software with AI agents in **[Craft Better Software](https://craftbettersoftware.com/)**, read by 200K+ engineers. [Subscribe](https://craftbettersoftware.com/) to get QuickE2E releases and the engineering behind them.
+Built by [Daniel Moka](https://www.linkedin.com/in/danielmoka/). I write about building software with AI agents in **[Craft Better Software](https://craftbettersoftware.com/?utm_source=github&utm_medium=readme&utm_campaign=quicke2e)**, read by 200K+ engineers. [Subscribe](https://craftbettersoftware.com/?utm_source=github&utm_medium=readme&utm_campaign=quicke2e) to get QuickE2E releases and the engineering behind them.
 
 | launch task, 5 runs per arm | median wall time | pass | cost / run |
 |---|---|---|---|
@@ -733,7 +733,7 @@ the repo has an `OPENROUTER_API_KEY` secret, CI also runs the fixture flows on t
 
 ## Author
 
-QuickE2E is built by Daniel Moka. Newsletter: [Craft Better Software](https://craftbettersoftware.com/), where QuickE2E releases and the engineering behind them come out first. Also on [LinkedIn](https://www.linkedin.com/in/danielmoka/) and [X](https://x.com/dmokafa).
+QuickE2E is built by Daniel Moka. Newsletter: [Craft Better Software](https://craftbettersoftware.com/?utm_source=github&utm_medium=readme&utm_campaign=quicke2e), where QuickE2E releases and the engineering behind them come out first. Also on [LinkedIn](https://www.linkedin.com/in/danielmoka/) and [X](https://x.com/dmokafa).
 
 ## License
 
